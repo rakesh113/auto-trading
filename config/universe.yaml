@@ -1,0 +1,31 @@
+# Recording universe for Phase 0 (design §11 feed plan). Phase 1's in-play selector
+# will rotate the depth-30 list during the day; until then it is this static list.
+
+index_constituents:
+  nifty500:
+    urls:
+      - https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv
+      - https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv
+
+record:
+  # C1 full_d30: ≤ 45 keys including index futures (5 of 50 kept spare for re-tiering)
+  depth30_stocks: [RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS, SBIN, AXISBANK, KOTAKBANK, LT, ITC,
+                   BHARTIARTL, BAJFINANCE, MARUTI, SUNPHARMA, HCLTECH, TITAN, ULTRACEMCO, ADANIENT,
+                   ADANIPORTS, NTPC, POWERGRID, ONGC, COALINDIA, TATASTEEL, JSWSTEEL, HINDALCO, WIPRO,
+                   TECHM, BAJAJFINSV, ASIANPAINT, HINDUNILVR, NESTLEIND, DRREDDY, CIPLA, INDUSINDBK,
+                   BEL, HAL, TRENT, ETERNAL, DLF, VEDL, BANKBARODA, M&M]
+  depth30_index_futures: [NIFTY, BANKNIFTY]       # nearest monthly future
+  # C2 full: every F&O stock plus these index futures (nearest expiry)
+  full_fno_stocks: true
+  full_index_futures: [NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY]
+  # C3 ltpc: Nifty 500 + these indices (canonical IDX symbols)
+  ltpc_nifty500: true
+  ltpc_indices: [NSE:IDX:NIFTY50, NSE:IDX:NIFTYBANK, NSE:IDX:INDIAVIX, NSE:IDX:NIFTYFINSERVICE,
+                 NSE:IDX:NIFTYMIDSELECT, NSE:IDX:NIFTYIT, NSE:IDX:NIFTYAUTO, NSE:IDX:NIFTYPHARMA,
+                 NSE:IDX:NIFTYMETAL, NSE:IDX:NIFTYFMCG, NSE:IDX:NIFTYREALTY, NSE:IDX:NIFTYPSUBANK,
+                 NSE:IDX:NIFTYENERGY, NSE:IDX:NIFTYMIDCAP100, NSE:IDX:NIFTYSMLCAP100, BSE:IDX:SENSEX]
+  # C4 option_greeks: weekly ATM ± N strikes, re-centred when spot moves
+  greeks_chains:
+    - {underlying: NIFTY, exchange: NSE, spot: NSE:IDX:NIFTY50, strikes_each_side: 10}
+    - {underlying: SENSEX, exchange: BSE, spot: BSE:IDX:SENSEX, strikes_each_side: 10}
+  greeks_recenter_min: 5

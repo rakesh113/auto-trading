@@ -519,7 +519,7 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 
 **Provider port** with capability flags (structured output, tools, caching, server web search, batch, effort control) and per-route config.
 
-**Adapters:** Anthropic (native), OpenAI (native), **OpenRouter** (OpenAI-compatible; gives Jev and many small models), and local models later. Capabilities are set **per model**, because structured-output support varies between models on OpenRouter.
+**Adapters:** **OpenRouter is the only provider in use** (owner decision, 9 Oct 2026): one key reaches Anthropic models, Jev and the small models. Native Anthropic/OpenAI adapters and local models remain possible behind the same port. Capabilities are set **per model**, because structured-output support varies between models on OpenRouter.
 
 ```yaml
 llm:
@@ -573,7 +573,7 @@ llm:
 - CI gates: replaying a golden day twice must give an identical journal hash, and replaying each live-paper day must reproduce its signals exactly.
 
 **Processes in the MVP (on the laptop):**
-- `trader-core`: feed, features, setups, risk, OMS, portfolio and square-off, in one uvloop process.
+- `trader-core`: feed, features, setups, risk, OMS, portfolio and square-off, in one asyncio process (uvloop does not run on Windows; the standard loop is enough at our message rates).
 - `recorder`
 - `conductor`: daily lifecycle, reference data, scheduled jobs.
 
@@ -604,10 +604,10 @@ A small supervisor script starts them and restarts any that crash. Docker is opt
 - Four kill levels: pause entries → cancel working orders → flatten → lock.
 
 **Technology:**
-- Python 3.12 with uvloop.
+- Python 3.12 with asyncio (uvloop where the OS supports it).
 - msgspec for hot-path events; pydantic for config and LLM I/O.
 - numpy and numba for incremental features; polars, DuckDB and pyarrow for research.
-- **Thin async broker adapters on httpx**, with our own websocket client. The SDKs serve as reference.
+- **Thin async broker adapters on httpx**, with our own websocket client. **The Upstox SDK is not used** (owner decision: unreliable); the SDK and the Upstox MCP connector serve only as reference.
 - structlog; pytest plus hypothesis for property tests of the order state machine.
 - **No Rust:** internal compute is under 1% of a latency budget dominated by the feed and the broker.
 - **Don't adopt NautilusTrader now.** Its v2 migration is in progress and it has no Indian adapters. Copy its patterns instead, and re-evaluate around Q1 2027.
@@ -875,3 +875,4 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | v0.1 | 2026-10-08 | Initial synthesis of the 12 research reports |
 | v0.1.1 | 2026-10-08 | Corrections from an adversarial fact-and-math check (risk invariant sign, overnight reserve, minimum stops, gates, roadmap) |
 | v0.2 | 2026-10-08 | Owner decisions: independent system, laptop paper hosting, 25% maximum drawdown, automatic swing, OpenRouter/Jev bake-off, budget, live probes moved to go-live |
+| v0.2.1 | 2026-10-09 | Implementation decisions: Python confirmed; asyncio instead of uvloop on the Windows laptop; no Upstox SDK; all LLMs through OpenRouter; venue chosen by `execution.venue` with a live-trading guard |

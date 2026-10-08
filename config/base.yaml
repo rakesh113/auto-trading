@@ -1,0 +1,68 @@
+# Base configuration. Profiles in config/profiles/ override this; config/local.yaml
+# (git-ignored) overrides both for machine-specific settings. Secrets live in .env.
+
+profile: paper
+
+system:
+  name: auto-trading
+  tag_prefix: AT                 # our orders carry tags starting with this (design D13)
+  data_dir: D:/trading-data      # recorder output, reference data, journals
+  log_level: INFO
+
+upstox:
+  analytics_token_env: UPSTOX_ANALYTICS_TOKEN   # read-only, 1 year: all market data
+  access_token_env: UPSTOX_ACCESS_TOKEN         # daily: live orders only
+  rest_per_sec: 10                              # ≤ 50% of the shared account limit
+
+feed:
+  provider: upstox
+  connections:                   # Upstox Plus: 5 sockets per account; C5 is reserve
+    - {name: c1_d30,    modes: [full_d30]}
+    - {name: c2_full,   modes: [full]}
+    - {name: c3_ltpc,   modes: [ltpc]}
+    - {name: c4_greeks, modes: [option_greeks]}
+  max_keys: {full_d30: 45, full: 1500, option_greeks: 2000, ltpc: 2000}
+  stale_after_s: 5
+
+instruments:
+  provider: upstox
+
+execution:
+  venue: paper                   # paper | upstox | <any registered trader>
+  settings:
+    paper:
+      emulate: upstox
+      cost_profile: upstox_plus  # conservative default (design §5)
+      fill_tier: conservative
+      starting_capital_inr: 1000000
+      latency_median_ms: 150
+      latency_p95_ms: 450
+    upstox:
+      use_hft_host: true
+      order_stream: true
+      reconcile_interval_s: 5
+
+throttle:
+  orders_per_sec: 5
+  burst: 5
+
+recorder:
+  rotate_minutes: 15
+  zstd_level: 3
+  flush_every_s: 2
+  bronze_retention_days: 30
+
+notifier:
+  provider: log                  # log | telegram (needs TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+
+llm:
+  provider: openrouter           # one key for every model (owner decision)
+  api_key_env: OPENROUTER_API_KEY
+  budget_inr_month: 8500
+  budget_inr_day: 400
+  routes:
+    triage:     {bakeoff: [anthropic/claude-haiku-5.5, "<jev-model-id>", "<small-model-id>"], timeout_s: 8}
+    strategist: {primary: anthropic/claude-opus-5.5}
+    planner:    {primary: anthropic/claude-sonnet-5.5}
+    critic:     {primary: "<other-vendor-model>", fallback: anthropic/claude-opus-5.5}
+    review:     {primary: anthropic/claude-sonnet-5.5}

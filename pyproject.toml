@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "auto-trading"
+version = "0.1.0"
+description = "AI trading desk for Indian markets: paper and live trading behind pluggable adapters"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "websockets>=14",
+    "protobuf>=5",
+    "pydantic>=2.8",
+    "pyyaml>=6",
+    "python-dotenv>=1",
+    "msgspec>=0.18",
+    "structlog>=24",
+    "pyarrow>=17",
+    "zstandard>=0.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6",
+    "ruff>=0.6",
+    "grpcio-tools>=1.66",
+]
+
+[project.scripts]
+trader = "trader.apps.cli:main"
+
+# Third-party traders, feeds and instrument masters register here, e.g.
+#   [project.entry-points."trader.traders"]
+#   mybroker = "mypkg.trader:MyBrokerTrader"
+[project.entry-points."trader.traders"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trader"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["src/trader/adapters/upstox/proto/*_pb2.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "DTZ", "TID"]
+ignore = ["E501"]
+
+# Look-ahead prevention (design §10): core code gets "now" only from the Clock port.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "Use the Clock port (trader.ports.clock.Clock), never wall time directly."
+"datetime.datetime.utcnow".msg = "Use the Clock port (trader.ports.clock.Clock), never wall time directly."
+"datetime.date.today".msg = "Use the Clock port (trader.ports.clock.Clock), never wall time directly."
+
+[tool.ruff.lint.per-file-ignores]
+"src/trader/core/clock.py" = ["TID251", "DTZ"]
+"tests/**" = ["DTZ", "B"]
