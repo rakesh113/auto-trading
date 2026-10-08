@@ -1,9 +1,19 @@
-# AI Trading Desk: System Design v0.1 (draft for discussion)
+# AI Trading Desk: System Design v0.2
 
-**Status:** draft for owner review (v0.1.1, after an adversarial fact-and-math check). Design only; no code yet.
+**Status:** v0.2, the spec we build from. It incorporates the owner's decisions of 8 Oct 2026 (§16). Design only; no code yet.
 **Date:** 2026-10-08.
 **Inputs:** 12 specialist and red-team reports in [`docs/research/`](../research/). They carry verified facts with sources and confidence tags. Where reports disagreed, this document uses the value the red team corrected.
-**Not covered:** the existing options-selling agent. It stays separate. Section 13 covers where the two systems touch.
+**Scope:** a **fully independent system**. It tracks and risk-manages only the orders it places, and ignores other agents, strategies and manual trades. It starts as live paper trading on the owner's laptop. The owner provides a separate account and static IP when it goes live.
+
+**What changed in v0.2:**
+- **Independence:** no shared-account constraints and no combined ledger with other agents. Reconciliation covers only this system's own tagged orders (§6, §10, §13).
+- **Laptop hosting for paper:** zero-ops storage (SQLite plus Parquet), sleep prevention, restart safety (§10, §14). Static IP and cloud hosting move to go-live.
+- **Drawdown:** maximum raised to 25%, with a longer size-reduction ladder (§6).
+- **Swing:** holds are automatic when the gates pass. An automatic Trade Critic check replaces owner approval (§7.5, §9).
+- **Jev and other small models** come through an OpenRouter adapter. News triage runs as a bake-off against Claude Haiku (§7.3, §9).
+- **LLM budget:** up to about ₹8.5k a month inside the ₹10k total, starting near ₹5k (§9).
+- **Data:** all 50 depth-30 slots belong to this system. REST limits are shared with the owner's other quote tools (§11).
+- **Live probes** move from the paper phase to a go-live stage, L0. The live login can wait until 09:20 (§8, §12, §15).
 
 ---
 
@@ -15,22 +25,24 @@
 | D2 | **Two-speed loop: Plan → Permit → Trigger.** The LLM writes plans over minutes. Plans become immutable, expiring permits. Rules and ML fire triggers in milliseconds inside those permits. | Gives discretionary judgement and scalping speed in one design. |
 | D3 | **Costs choose the instrument.** Stocks: cash MIS. Index direction: weekly ATM/ITM options on Nifty and Sensex. **No futures for intraday.** | Budget 2026 STT: futures 0.05%, options 0.15% of premium. Cash intraday is unchanged at 0.025%. |
 | D4 | **A friction gate in code.** If estimated costs plus slippage exceed 0.2R, the trade is not taken. | Costs relative to stop size are the main way retail intraday and scalping lose. |
-| D5 | **Intraday daily loss: 2% hard limit (flatten and lock for the day).** Overnight gap risk is capped separately at 1%, so the worst possible day is 3%, your stated maximum. R ≤ 0.5%, run at 0.25% in the first live stage. | Five 3% days make a 15% drawdown. A new, unvalidated system will have such days. |
+| D5 | **Intraday daily loss: 2% hard limit (flatten and lock for the day).** Overnight gap risk is capped separately at 1%, so the worst possible day is 3%, the owner's stated maximum. R ≤ 0.5%, run at 0.25% in the first live stage. **Maximum drawdown 25%** (full stop), with size cut in steps well before that. | Five 3% days make a 15% drawdown. A new, unvalidated system will have such days. |
 | D6 | **The paper broker is a drop-in adapter with conservative fills.** Go-live is decided per setup, on the conservative fill tier, using a sequential test (SPRT). | Paper optimism is the main cause of false go-lives. |
 | D7 | **The tick and 30-level depth recorder is built first and runs every day.** | No broker or affordable vendor sells historical depth. Every unrecorded day is lost. |
-| D8 | **Data source and execution venue are separate config choices.** Upstox supplies data through a 1-year read-only Analytics Token. Execution is `paper`, `upstox` or `zerodha`. | Upstox allows one API app per user, and the existing agent probably uses it (§13). |
+| D8 | **Data source and execution venue are separate config choices.** Upstox supplies data through a 1-year read-only Analytics Token. Execution is `paper` now; at go-live, `upstox` or `zerodha` on a separate account the owner provides. | Paper needs no broker login or static IP, and the live broker can change without touching strategy code (§13). |
 | D9 | **Hexagonal (ports and adapters) architecture.** One engine serves replay, paper, shadow and live. Startup checks each strategy's requirements against the adapters' capabilities, and every adapter must pass a shared conformance test suite. | True plug-and-play, without silent degradation. |
 | D10 | **A no-LLM baseline book always runs alongside.** An LLM agent stays only if its measured improvement exceeds its cost. | LLM spend is a real hurdle on ₹10L of capital. |
-| D11 | **Scalping starts as a recording and research track.** The ML filter comes only after 50–100 recorded sessions. Jev and fast LLMs are used for text triage only, in shadow mode first. | Snapshot feeds, cost per trade, and no depth history. |
+| D11 | **Scalping starts as a recording and research track.** The ML filter comes only after 50–100 recorded sessions. Jev (via OpenRouter) and other fast models compete with Claude Haiku on news triage; they stay out of numeric trade decisions. | Snapshot feeds, cost per trade, and no depth history. |
 | D12 | **MCX starts with an operations layer** (contract calendar, rolls, tender/delivery, margin stress, band locks) before any MCX strategy. Mini and micro contracts only. | Compulsory delivery, pre-expiry margin and locked-limit days are the real MCX risks. |
+| D13 | **Fully independent.** The system tracks, reconciles and risk-manages only orders carrying its own tag. Everything else in the account is ignored. | Owner decision; keeps the system self-contained. |
+| D14 | **Laptop-first for paper.** One machine, zero-ops storage (SQLite plus Parquet), restart-safe and sleep-proof. Cloud hosting and static IP come at go-live. | Owner decision; no server cost during paper. |
 
 ---
 
 ## 1. Goals and constraints (from the owner)
 
-- **Capital:** ₹10L. Daily risk appetite 2–3%. Intraday leverage up to 4x.
-- **Paper first:** live paper trading comes first. The execution venue is selected by config: paper, Upstox, Zerodha, or others later.
-- **Holding period:** intraday first. Swing trades only for exceptional setups, because of overnight geopolitical risk.
+- **Capital:** ₹10L. Daily risk appetite 2–3%. Intraday leverage up to 4x. Maximum tolerable drawdown 25%.
+- **Paper first:** live paper trading on the owner's laptop comes first. The execution venue is selected by config: paper, Upstox, Zerodha, or others later.
+- **Holding period:** intraday first. Swing trades only for exceptional setups, because of overnight geopolitical risk. A setup that passes the swing gates is held automatically; no manual approval.
 - **Modules:** intraday stocks, intraday options (index and stock), 1–10 minute scalps, and MCX commodities (intraday and positional).
 - **Universe:** liquid Nifty 500 names, focusing each day on a few that are in play by news or price.
 - **Modularity:** plug-and-play replacement of the LLM, broker, market-data and news sources.
@@ -43,7 +55,8 @@
   - websocket feeds
   - Upstox Plus, which includes 30-level depth and expired-contract history
   - Zerodha Kite
-- **Separation:** this is a new system, separate from the existing options-selling agent.
+- **Independence:** a complete, standalone system. It ignores other agents, strategies and manual trades, and tracks only its own orders. The owner will use a separate account for live trading.
+- **Budget:** ≤ ₹10k a month for LLM, servers and data during paper. No paid data feeds yet.
 
 ---
 
@@ -70,7 +83,7 @@
 
 **Expectations:**
 - Year-1 success means **positive expectancy after all costs, at small size**.
-- A full stack of operating costs (LLM, two VPS machines, data, a possible news feed) is about ₹15–25k a month, or 18–30% of capital a year. That is a real hurdle. Keep it **≤ ₹10k a month during paper trading**.
+- Operating costs are capped at **₹10k a month during paper**. On the laptop that is almost all LLM spend. A full cloud stack later (VM, LLM, data, perhaps a news feed) runs about ₹15–25k a month, or 18–30% of capital a year, which is a real hurdle the trading must beat.
 - The scalping report's realistic target, if scalping works, is +0.1 to +0.25R net per trade. 3–4 of 6 candidate scalp setups may never pass the gate.
 
 ---
@@ -118,9 +131,9 @@ Details and sources are in research reports 01, 02, 06, 08 and 09.
 |---|---|
 | The SEBI retail algo framework has been fully in force since 1 Apr 2026. Static IP applies to **order endpoints only** (primary plus backup, changed at most weekly). Daily 2FA. Orders are tagged as algo. Unregistered algos may send ≤ 10 orders/s per exchange, and modifies and cancels count. | Self-throttle at **5 orders/s**, with priority FLATTEN > STOP > EXIT > ENTRY. At most one trailing-stop modify per 3 s. **Slices count toward the cap.** Upstox's `slice=true` can send up to 25 children at once, so we use our own slicer behind the throttle. Paper mode needs no static IP. |
 | Market orders are converted to market-price-protection (MPP) orders. Kite rejects `market_protection=0`. SL-M is blocked on options. HTTP success does not mean the order was accepted, because RMS rejections arrive later. | Send **marketable limit orders with our own price cap** everywhere. The OMS waits on the order stream before treating an order as live. |
-| **Upstox allows one active API app per user.** Generating a new token can expire the previous one. WebSocket connections, the order-rate cap, depth-30 slots and REST limits are all shared per account. | §13: a broker-topology decision is required. |
-| The **Upstox Analytics Token** is valid for 1 year, read-only, and covers the feed and historical data. | Paper mode can run unattended with no daily login. Confirm with Upstox that generating it leaves the existing agent's app and token alone. |
-| Feeds are **conflated snapshots** (about 1–4 per second). There is no tick-by-tick data and no historical depth. Upstox `full_d30` is limited to **about 50 keys per account**, and its depth levels carry no order count. Kite offers only 5 levels. | Record from day 1. Aggregate features over ≥ 10 s. Re-tier subscriptions at most every 5 minutes. |
+| **Upstox allows one active API app per user.** Generating a new token can expire the previous one. WebSocket connections, the order-rate cap, depth-30 slots and REST limits are all shared per account. | Not a constraint for this system. Paper uses only the read-only Analytics Token, and live will use a separate account (§13). |
+| The **Upstox Analytics Token** is valid for 1 year, read-only, and covers the feed and historical data. | Paper runs unattended with no daily login. The owner generates the token. The system alerts 30 days before it expires. |
+| Feeds are **conflated snapshots** (about 1–4 per second). There is no tick-by-tick data and no historical depth. Upstox `full_d30` is limited to **about 50 keys per account**, and its depth levels carry no order count. Kite offers only 5 levels. | All 50 slots belong to this system (no other websocket user); use ≤ 45. Record from day 1. Aggregate features over ≥ 10 s. Re-tier subscriptions at most every 5 minutes. |
 | **Closing Auction Session (from 3 Aug 2026)** for F&O stocks: continuous trading ends at 15:15, and SL and iceberg orders are **cancelled at 15:15**. F&O trades until 15:40. Upstox MIS square-off moved to **15:10** for CAS stocks and 15:25 for others (from 11 Sep 2026). Zerodha squares off CAS stocks at 15:12. | No new entries after **14:40** for any name. CAS names flat by **15:00**. Non-CAS names flat by **15:12**, deliberately a little earlier than the red team's 15:15. A CAS stock's official close is an auction price; treat it that way in previous-close and label logic after 3 Aug 2026. |
 | **Pre-open revised (7 Sep 2026):** 09:00–09:05 market and limit orders; 09:05–09:10 limit orders only, with a random close between 09:08 and 09:10; matching 09:10–09:12. SL orders are not accepted. Futures have had a pre-open since Dec 2025; options are excluded. | The final indicative equilibrium price arrives around 09:12. The in-play list is finalised at 09:12. |
 | **STT from 1 Apr 2026:** cash intraday 0.025% sell side (unchanged); futures 0.05% sell side; options 0.15% of sell premium. NSE transaction charge (from 1 Mar 2026, circular FA73061): cash 0.00307%, futures 0.00183%, options 0.03553% (verify; keep it in config). | Cost schedules are stored as data with effective dates, and live fills are reconciled to contract notes. |
@@ -128,8 +141,8 @@ Details and sources are in research reports 01, 02, 06, 08 and 09.
 | Intraday equity leverage is at most 5x (the higher of 20% margin or VaR+ELM). F&O stocks have dynamic price bands; other stocks have fixed 2/5/10/20% bands. | **Shorts only in F&O stocks.** Block new entries within about 1% of a price band. |
 | Option-chain OI refreshes about every 3 minutes. | OI is context and a logged feature, never a hard gate. |
 | Upstox GTT orders require an ENTRY leg, so they cannot protect an existing position. Zerodha's single-leg GTT can. | Overnight protection depends on the broker (§7.5). |
-| NSE reportedly blocks cloud IP ranges for scripted access. | Run filings ingestion from home or another residential IP, or use BSE/RSS or a paid feed as fallback. |
-| Upstox reportedly disabled MCX API trading in Apr 2026 (to verify). Upstox's expired-data API covers NSE/BSE F&O starting between Oct 2024 and Feb 2025 depending on the account, with some weekly expiries missing. MCX coverage is unconfirmed. | MCX execution may need Zerodha. Verify in week 1. |
+| NSE reportedly blocks cloud IP ranges for scripted access. | The laptop at home avoids this during paper. For a cloud deployment, keep filings ingestion on a residential connection, or use BSE/RSS or a paid feed as fallback. |
+| Upstox reportedly disabled MCX API trading in Apr 2026 (to verify). Upstox's expired-data API covers NSE/BSE F&O starting between Oct 2024 and Feb 2025 depending on the account, with some weekly expiries missing. MCX coverage is unconfirmed. | Live MCX execution may need Zerodha (owner agrees). Verify MCX data coverage on the Upstox feed in Phase 0. |
 | **Current regime:** Nifty about 22,776 (6 Oct), after an 8-week losing streak. VIX 13.6–14.7, with headline spikes (+26% on 8 Jul). Brent about $100. FIIs net sellers for 15 months. The Q2 results season is starting. | Short setups matter. Event and geopolitical gates matter. The paper phase will cover a results season, which makes a good stress test. |
 
 ---
@@ -176,6 +189,8 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 
 **Brokerage.** Upstox Plus at ₹30/order versus Zerodha at ₹20 is about a ₹10/order difference on full-size orders. At 10 round trips a day that is about ₹59k a year, roughly 6% of capital. Because of the 0.1% cap, 1-share probe orders cost only a few rupees.
 
+**Paper cost profile.** Conservative by default: Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). A strategy that works at ₹30 per order also works at ₹20. The profile switches to the live account's actual tariff at go-live.
+
 ---
 
 ## 6. Risk framework (₹10L)
@@ -195,11 +210,11 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 | Index exposure | Beta-weighted Nifty-equivalent delta must satisfy `delta_notional × (1.5% + vega stress) ≤ 0.9 × remaining DLL_eff`. That is about **₹10–12L on a clean day** and shrinks as the day's budget is used. |
 | Module sub-caps (fractions of DLL_eff; caps, not allocations, and not additive) | Equity 60% · Options 40% · Scalping 25% (at most ₹5k while unproven) · MCX 40% (report 11's ₹10k of a ₹25k DLL, rescaled). **Evening MCX budget = max(0, min(0.4 × DLL_eff, DLL_eff − loss so far − ₹2.5k buffer))**. |
 | Risk day | The IST calendar date, from 09:00 to the MCX close. **One ledger across equity and MCX.** Equity profits never increase the MCX budget. |
-| Weekly / monthly | −4%: stop live trading for the rest of the week. −8%: halt, then 10 paper sessions and a written post-mortem. |
-| Drawdown ladder | 5% / 8% / 12% from the high-water mark: size 0.75x / 0.5x / 0.25x. **15%: full stop and strategy review.** |
+| Weekly / monthly | −4%: stop trading for the rest of the week. −8% in a month: halt live trading, then 10 paper sessions and a written post-mortem. In the paper phase both rules apply to the paper book; a −8% month triggers the post-mortem while paper trading continues. |
+| Drawdown ladder | 5% / 10% / 15% / 20% from the high-water mark: size 0.75x / 0.5x / 0.35x / 0.25x. At 15%, a written strategy review is mandatory while trading continues at reduced size. **25%: full stop.** |
 | Streaks | 3 losses in a row: 30-minute cool-off, then 2 trades at 0.5x. 4 losers in a day: intraday done. |
 | Profit protection | Once the day's peak P&L is ≥ ₹10k, any new risk must keep `P&L − new_risk ≥ 0.5 × peak`. Flatten everything if P&L falls to 50% of the peak. |
-| Shared account with the options agent | A **combined ledger and DLL** (§13). |
+| Scope | Only positions from this system's own tagged orders count. Available margin is read from the broker's funds API, so any other activity in the account can only reduce it. |
 
 **Hard rules.** These are code, never touched by the LLM, and changed only by owner-signed config outside market hours:
 - The DLL and kill tiers.
@@ -210,7 +225,7 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 - Universe exclusions.
 - Limit orders only.
 - Order-rate cap.
-- Reconciliation halt.
+- Reconciliation halt (this system's own orders only).
 - A stale feed blocks new entries.
 - The LLM never creates orders.
 
@@ -286,7 +301,7 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - Expiry is detected from the contract master.
 - IV and greeks are computed in-house from synchronized mid quotes against a synthetic forward, not taken from vendor greeks.
 
-**Interaction with the existing options-selling agent.** That agent is short volatility. On a crash day, a short strangle and long stock positions lose together. If possible, give this system a read-only view of the other agent's positions for a combined stress test.
+**Independence.** The options module ignores other agents and accounts (owner decision). Inside this system it still shares the global risk ledger, so index exposure from options and stocks is netted in the book-delta limit (§6).
 
 ### 7.3 Scalping (3–10 min holds) and fast models
 
@@ -340,7 +355,9 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - **P4** live micro-size once the gate passes: ≥ 200 paper trades at ≥ +0.15R on conservative fills, PF ≥ 1.3, positive in 2 of 3 time-split thirds. The ML stage needs **50–100 recorded sessions** (§15 uses the same figure).
 
 **On Jev.** Research found it is a real product: TypeSafe AI's "System One" typed-decision model, in early access since mid-Sep 2026. Vendor claims are 70–500 ms latency and typed outputs (choice, score or boolean) with probabilities. No independent benchmarks exist yet. Sources are in report 04.
-- **Where it fits:** the `TextDecisionModel` port, for news and filing triage (material? direction? which symbol?). Run it in shadow against Haiku and score both by Brier score.
+- **Access:** through OpenRouter (owner), alongside other small models.
+- **Where it fits:** the `TextDecisionModel` port, for news and filing triage (material? direction? which symbol?). From Phase 1 the triage slot runs a **bake-off**: Claude Haiku, Jev and one other small OpenRouter model answer the same filings in shadow. They are scored on Brier score, recall on big movers and cost. The winner becomes primary and the runner-up the fallback.
+- **Verify in Phase 0:** how OpenRouter exposes Jev's typed outputs (JSON schema or plain text), and its real latency from the laptop.
 - **An experiment worth running:** feed it anonymized feature snapshots in shadow alongside LightGBM.
 - **Why it is kept out of the numeric hot path:** validation, not latency. A zero-shot model is not calibrated to our data, can't be honestly backtested, and is non-deterministic. If it beats the alternatives on calibrated shadow metrics, it can be promoted to a gate, never to sizing.
 
@@ -383,7 +400,8 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - Free delayed international prices are enough for regime work. Paying for CME live data (about 2% of capital a month) is not justified.
 - Self-record MCX ticks, or buy vendor 1-minute history.
 - MCX square-off: Upstox 22:50 (US summer time) / 23:25 (winter), Zerodha 23:20 / 23:45. **The system's time stop is 22:40 / 23:15.**
-- Daily 2FA means no unattended start. Re-arm overnight stops at 09:00:05. If price has already gone through the stop at the open, send a protected marketable exit.
+- Paper needs no login. Live: overnight stops are re-armed as soon as the day's execution token arrives (approval by about 09:00). If price is already through the stop, send a protected marketable exit.
+- Live MCX execution may need Zerodha if Upstox MCX API trading is still off; decided at go-live.
 
 ### 7.5 Swing (exception path)
 
@@ -394,7 +412,9 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - VIX < 18 and not up more than 10% on the day;
 - no binary event in the holding window;
 - an explicit invalidation;
-- **owner approval on Telegram.**
+- an automatic **Trade Critic** check (a second LLM using the independent-first protocol, §9) does not object.
+
+**No manual approval** (owner decision). The owner gets an informational Telegram notice for every overnight hold.
 
 **Sizing:**
 
@@ -407,13 +427,14 @@ qty = floor(min(0.25% E / (price × shock%), 0.5% E / (entry − stop)))   # per
 **Portfolio rule:** under a Nifty −4% gap scenario, the beta-adjusted total shock of *all* overnight positions (equity and MCX) must fit inside the 1% reserve. At most 3 swing names, and at most 1 while any MCX positional is open.
 
 **Rules:**
-- **CNC only.** No leverage, no MTF. An approved swing position is **explicitly exempt from the intraday flatten**. It is converted MIS → CNC (which needs full cash) or entered as CNC between 14:30 and 14:40, before the cutoffs.
+- **CNC only.** No leverage, no MTF. A qualified swing position is **explicitly exempt from the intraday flatten**. It is converted MIS → CNC (which needs full cash) or entered as CNC between 14:30 and 14:40, before the cutoffs.
 - Holding period 1–5 days.
 - Exit on a close below the 10 EMA.
 - Cut the book by 50% before weekends when the geopolitical score is 2 or higher.
 - Alternative: a defined-risk option debit spread.
+- A CNC position ties up its full value in cash, which reduces the next day's intraday margin. The paper broker models this.
 
-**Protection:** SL orders on CAS stocks are cancelled at 15:15, and SL orders are not accepted in pre-open. On **Zerodha** (option A in §13), a single-leg GTT can protect a held position overnight. On **Upstox**, GTT can't do that, so a 09:15 job re-arms the stops. Either way an opening gap jumps past any stop, so **sizing is the real protection**.
+**Protection:** SL orders on CAS stocks are cancelled at 15:15, and SL orders are not accepted in pre-open. On **Zerodha**, a single-leg GTT can protect a held position overnight. On **Upstox**, GTT can't do that, so a 09:15 job re-arms the stops. Either way an opening gap jumps past any stop, so **sizing is the real protection**.
 
 ---
 
@@ -435,7 +456,7 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 
 | Window | Rule |
 |---|---|
-| 08:30–09:00 | Health checks (token, feed, margin, mapping). Live token deadline is **09:00**. A failure means no new live entries that day (paper continues). If overnight positions exist, the owner gets a P1 alert to protect or exit them in the broker app. |
+| 08:30–09:00 | Health checks (feed, margin, mapping). **Paper needs no daily login.** On live days the execution token can arrive as late as **09:20** without missing anything, because the first entries are at 09:25. After that, trading starts whenever it arrives and skips setups whose window has passed. Overnight positions get their stops re-armed the moment it arrives, with alerts at 09:00 and 09:10 while it is missing. |
 | 09:00–09:12 | No orders. Read the pre-open indicative price and imbalance, and finalise the in-play list at 09:12. |
 | 09:15–09:25 | Observe and build the opening range. No discretionary entries. |
 | 09:25–11:30 | Main trend window. All setups allowed, subject to day type. |
@@ -454,11 +475,11 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 | # | Agent | Model tier | When |
 |---|---|---|---|
 | 1 | Pre-market Strategist (with tools) | strong (Opus-class) | 08:30–09:05, refreshed at 09:12 |
-| 2 | Filings/News Triage | fast (Haiku-class; Jev as challenger) | event-driven, after a rule pre-filter |
+| 2 | Filings/News Triage | fast: bake-off of Claude Haiku, Jev (OpenRouter) and another small model | event-driven, after a rule pre-filter |
 | 3 | Materiality Analyst (≤ 4 tool calls) | standard (Sonnet-class), escalating to strong | about 5–10% of items |
 | 4 | Plan Writer | standard | per candidate, on events, on plan expiry; ≤ 3 plans per symbol per day |
 | 5 | Intraday Re-assessor | fast, escalating to standard | when the delta gate fires, plus a 30-min backstop |
-| 6 | Trade Critic | strong, **from a different vendor** | large-risk plans, swing candidates, and trades after 2 losses |
+| 6 | Trade Critic | strong, **from a different vendor** | large-risk plans, **every swing hold** (it replaces owner approval), and trades after 2 losses |
 | 7 | Post-market Reviewer | standard per trade (batch) | 15:45–18:00 |
 | 8 | Weekly Playbook Tuner | strong (batch) | Saturday. Proposes changes; the owner approves. |
 
@@ -489,20 +510,24 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 | Lean+ (recommended once proven) | ≈ 11–13k |
 | Standard | ≈ 23k |
 
-**MVP target during paper: ≤ ₹5k a month.** That covers one pre-market brief plus Haiku-class triage.
+**Budget during paper: ₹10k a month in total.** On the laptop, infrastructure costs about ₹0, so up to about **₹8.5k a month** can go to LLMs. The rest covers incidentals, such as an optional ₹500/month Kite Connect data cross-check. **Start at about ₹5k a month** (pre-market brief plus the triage bake-off) and add agents only when they beat the no-LLM baseline.
 
 **Leakage.** Current Claude models have a June 2026 training cutoff.
 - Build the golden set from Jul–Oct 2026 filings: the Q1 FY27 results season, about 500 results plus other filings.
 - Pre-cutoff history is fine for testing extraction accuracy, but not for testing prediction.
 - The model registry stores each model's cutoff.
 
-**Provider port** with capability flags (structured output, tools, caching, server web search, batch, effort control) and per-route config:
+**Provider port** with capability flags (structured output, tools, caching, server web search, batch, effort control) and per-route config.
+
+**Adapters:** Anthropic (native), OpenAI (native), **OpenRouter** (OpenAI-compatible; gives Jev and many small models), and local models later. Capabilities are set **per model**, because structured-output support varies between models on OpenRouter.
 
 ```yaml
 llm:
-  budget_inr_day: 230            # ≈ ₹4.8k per 21-day month; batch and weekend jobs come from the same monthly cap
+  budget_inr_month: 8500         # hard cap; batch and weekend jobs come from the same cap
+  budget_inr_day: 400            # soft daily cap (degrade ladder applies)
   routes:
-    triage:     {primary: anthropic/claude-haiku-5-5, challenger: typesafe/jev, fallback: rules, timeout_s: 8}
+    triage:     {bakeoff: [anthropic/claude-haiku-5-5, openrouter/<jev-model-id>, openrouter/<small-model-id>],
+                 fallback: rules, timeout_s: 8}
     strategist: {primary: anthropic/claude-opus-5-5, effort: high, max_tool_calls: 12}
     planner:    {primary: anthropic/claude-sonnet-5-5, effort: medium, on_fail: no_plan}
     critic:     {primary: openai/<model>, fallback: anthropic/claude-opus-5-5}
@@ -547,20 +572,33 @@ llm:
 - News uses our first-seen timestamp.
 - CI gates: replaying a golden day twice must give an identical journal hash, and replaying each live-paper day must reproduce its signals exactly.
 
-**Processes in the MVP:**
+**Processes in the MVP (on the laptop):**
 - `trader-core`: feed, features, setups, risk, OMS, portfolio and square-off, in one uvloop process.
 - `recorder`
-- `conductor`: daily lifecycle, token flow, reference data.
+- `conductor`: daily lifecycle, reference data, scheduled jobs.
 
-**Added later:** `intel-worker` (LLM agents), `api` (UI), and `deadman`, a separate process that flattens positions if the core's heartbeat is lost.
+A small supervisor script starts them and restarts any that crash. Docker is optional on the laptop.
 
-**Storage:** Postgres for append-only order events, fills, plans, journal and LLM calls, plus Parquet and DuckDB for ticks, depth and features. **Not in the MVP:** NATS, Loki, TimescaleDB, ClickHouse.
+**Added later:** `intel-worker` (LLM agents), `api` (UI), and, for live trading only, `deadman`: a separate process (ideally on another machine) that flattens positions if the core's heartbeat is lost.
+
+**Storage:**
+- **Paper on the laptop:** SQLite in WAL mode for append-only order events, fills, plans, journal and LLM calls, plus Parquet and DuckDB for ticks, depth and features. Nothing to install or administer.
+- **Later:** the storage port lets Postgres replace SQLite for a cloud deployment without code changes.
+- **Not in the MVP:** NATS, Loki, TimescaleDB, ClickHouse.
+
+**Laptop operation:**
+- Prevent sleep during market hours (09:00–15:45) and, when MCX is enabled, until the evening time stop: `caffeinate` on macOS, `systemd-inhibit` on Linux, a power plan on Windows.
+- Start at login and restart on crash.
+- **Restart-safe:** state is rebuilt from the journal; open paper positions keep their stops.
+- Detect network loss, mark data stale, block new entries, and resume cleanly.
+- Monitor free disk space and the clock offset against Upstox server timestamps (the OS keeps time via NTP).
+- Every market day the laptop is off loses paper evidence and depth data, which pushes the go-live gates out.
 
 **OMS details:**
 - Idempotent `client_order_id` encoded in the broker `tag`.
 - The order is written to a log before it is sent.
 - **No automatic resend on timeout:** the order goes to `UNKNOWN`, and the OMS looks it up by tag.
-- Reconciliation every 5 s; the broker is the source of truth for positions.
+- Reconciliation every 5 s, **for this system's own orders only** (identified by tag prefix). Untagged orders and positions are ignored, never a halt. Positions are reconciled at order and fill level, so other trades in the same symbol can't confuse it.
 - Naked-position invariant: every position must have stops covering its full quantity.
 - An independent `Guardian` holds last-chance caps (max notional, max orders per minute).
 - Four kill levels: pause entries → cancel working orders → flatten → lock.
@@ -585,7 +623,7 @@ llm:
 profile: paper                         # replay | paper | shadow | live
 market_data: {primary: upstox_v3 (analytics_token), secondary: kite?}
 historical:  upstox
-execution:   {venue: paper, paper: {emulate: zerodha, fill_tier: conservative, books: [prod, baseline, vetoed]}}
+execution:   {venue: paper, paper: {emulate: upstox, cost_profile: upstox_plus, fill_tier: conservative, books: [prod, baseline, vetoed]}}
 llm:         {routes: ...}             # section 9
 news:        [nse_filings, bse_filings, web_search: anthropic]
 fast_models: {scalp_filter: {type: lightgbm, artifact: meta_v1, shadow_only: true}}
@@ -599,7 +637,7 @@ src/trader/{domain,ports,core,marketdata,features,strategies,models,risk,oms,por
 research/   (notebooks, labelling, training; never imported by src)
 tests/      unit · property (OMS FSM) · contract (adapter conformance) · golden_days
 config/     base.yaml · profiles/ · strategies/ · risk.yaml · universe.yaml · costs.yaml
-deploy/     docker-compose, chrony, grafana
+deploy/     laptop supervisor and sleep-prevention scripts; cloud docker-compose later
 ```
 
 ---
@@ -610,11 +648,13 @@ deploy/     docker-compose, chrony, grafana
 
 | Connection | Mode | Instruments |
 |---|---|---|
-| C1 | `full_d30` | ≤ 40 keys **including** index futures. This leaves headroom under the 50-key per-account cap, which the other agent may also use. |
+| C1 | `full_d30` | ≤ 45 keys **including** index futures. All 50 slots belong to this system; the spare 5 absorb re-tiering churn. |
 | C2 | `full` | ≤ 200 candidates and F&O underlyings |
 | C3 | `ltpc` | Nifty 500, indices and VIX (for breadth) |
 | C4 | `option_greeks` | Nifty and Sensex weekly ATM ± 10 strikes |
-| C5 | — | Reserve (for the other agent, or a hot reconnect) |
+| C5 | — | Reserve for a hot reconnect |
+
+**REST budget.** Upstox REST limits are per account and shared with the owner's other tools that call the market-quote API. So this system keeps its REST use under 50% of each limit. Live data comes from the websocket; history backfills run in the evening or at weekends.
 
 **Bars.** Use the feed's own 1-minute OHLC fields, plus local sub-minute aggregates. Reconcile nightly against broker candles. Bars built only from snapshots miss highs and lows that happen between frames.
 
@@ -622,7 +662,7 @@ deploy/     docker-compose, chrony, grafana
 - **Bronze:** raw protobuf frames with receive time in nanoseconds, zstd-compressed, rotated every 15 min.
 - **Silver:** nightly Parquet, partitioned by date and symbol.
 - **Gold:** resampled bars and feature sets.
-- About 1–2 GB a day compressed. Replicate to object storage daily and run a restore drill.
+- About 1–2 GB a day compressed (25–45 GB a month). On the laptop: keep raw (bronze) files for 30 days and Parquet (silver, about 0.5–1 GB a day) indefinitely. Back up weekly to an external drive or cloud storage, and test a restore once.
 - Data-quality checks: levels per frame (some users get only 5 levels in d30 mode), crossed books, feed lag, gaps on reconnect.
 
 **Historical data:**
@@ -632,8 +672,8 @@ deploy/     docker-compose, chrony, grafana
   - STT increase (Apr 2026)
   - closing auction (Aug 2026)
   - pre-open revision (Sep 2026)
-- Expired F&O 1-minute data from about Oct 2024, with gaps.
-- Kite Connect (₹500/month) as a cross-check and for MCX daily continuous series.
+- Expired F&O 1-minute data, starting Oct 2024–Feb 2025 depending on the account, with some weekly expiries missing.
+- Optional: Kite Connect (₹500/month) as a cross-check and for MCX daily continuous series.
 
 **Filings and news:**
 - Poll NSE and BSE every 5–10 s in market hours, and every 30–60 s in the evening (results).
@@ -659,7 +699,7 @@ deploy/     docker-compose, chrony, grafana
 **Fill tiers:** optimistic, base and **conservative**. Decide only on conservative, and reject any strategy that is profitable only on the optimistic tier.
 - **Marketable orders** walk the depth-30 book seen at arrival, using 70% of displayed size, with a liquidity ledger so the same displayed size can't be consumed twice.
 - **Passive limits** fill only on a trade-through or when the queue ahead is used up.
-- **Latency** is lognormal: equity median about 120–180 ms and p95 about 450 ms; options at least 200–300 ms. Calibrate with probes.
+- **Latency** is lognormal: equity median about 120–180 ms and p95 about 450 ms; options at least 200–300 ms. During paper, the laptop's measured REST round trip to Upstox serves as a proxy (plus a margin). Proper calibration comes from live probes at stage L0.
 - **Broker behaviour is emulated:** the market-protection remainder; SL-limit orders that a gap can skip; the CAS rules (no entry, modify or cancel 15:15–15:20; auction until 15:35; v1 never trades the auction); broker square-off with its fee; fault injection (rejects, feed gaps, reconnects, token expiry).
 
 **Counterfactual books, free in paper:**
@@ -669,9 +709,10 @@ deploy/     docker-compose, chrony, grafana
 
 Paired daily differences give the **uplift of the LLM and of each filter**.
 
-**Live 1-share probes during the paper phase:**
-- 20–40 orders a day, once the live account and static IP exist.
-- They calibrate latency, fill probability, market-protection behaviour and rejection codes.
+**Stage L0, live probes (at go-live, not during paper):**
+- When the owner opens the live account, the first 2–3 weeks are 1-share probe orders, 20–40 a day, each with a paper twin.
+- L0 can start as soon as the live account exists, even while paper is still collecting evidence. Starting it early shortens the path to L1.
+- Probes calibrate latency, fill probability, market-protection behaviour and rejection codes.
 - Paper counts as calibrated when:
   - median live-minus-paper shortfall ≤ 0.03R
   - live/paper passive fill-rate ratio is 0.85–1.15
@@ -684,13 +725,14 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 
 **4–6 weeks of paper proves the plumbing. A go/no-go needs about 205 trades *per setup*.** At a realistic 2–4 trades a day per setup, that is 10–20 weeks. So the first setup can go live around week 14–20, and the others later. This is why phase 1 has only 2–3 setups.
 
-**Go-live gate, paper → live L1 (R = 0.25%)** (all of these):
+**Gate 1, paper → L0 probes** (all of these):
 - ≥ 40 trading days.
 - SPRT accepts on the conservative tier, or ≥ 200 trades with a bootstrap 90% CI lower bound above 0.
 - Observed expectancy ≥ +0.10R (SPRT tested against +0.15R), profit factor ≥ 1.25, max drawdown ≤ 6%.
 - Still positive after removing the best 5% of trades, and with +1 tick per side.
 - Zero risk breaches and zero unreconciled orders in the last 20 days.
-- **Paper calibrated by live probes** to the three criteria above. Without probe data, paper fills are an unverified model.
+
+**Gate 2, L0 → L1 (R = 0.25%):** the three calibration criteria above are met, **and** the setup's paper record, re-scored with the calibrated fill model, still passes Gate 1. Without probe data, paper fills are an unverified model.
 
 **L1 → L2 → L3:** each step needs ≥ 20 days and ≥ 80 trades, live not significantly worse than its shadow twin, and an average slippage gap ≤ 0.05R.
 
@@ -698,7 +740,7 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 - a setup's rolling 50-trade expectancy below −0.1R, or a CUSUM alarm;
 - live-minus-paper gap > 0.1R over 30 trades;
 - feed stale for more than 5 s with open positions (flatten);
-- an unknown reject code or a reconciliation mismatch (halt).
+- an unknown reject code, or a reconciliation mismatch on this system's own orders (halt).
 
 **Discipline:**
 - Freeze parameters for each evaluation window.
@@ -707,29 +749,24 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 
 ---
 
-## 13. Broker and account topology (owner decision needed)
+## 13. Broker setup and account scope
 
-**The problem.** Upstox allows **one active API app per user**, and a new token can expire the previous one. Static IP, the order-rate cap, websocket connections, depth-30 slots and REST limits are all per account. If the existing options agent uses the same Upstox account, the new system could **blind it or kill its session**.
+**Paper (now):** no broker account is used for trading. Data comes from Upstox through the read-only Analytics Token, so there is no daily login and no static IP.
 
-**Option A (recommended):**
-- **Data** comes from Upstox through the **Analytics Token**, after confirming in writing with Upstox that it doesn't affect the existing app or token.
-- **Execution** goes through a **separate Zerodha account** with its own capital:
-  - The Personal API is free for orders, at ₹20 per order.
-  - Single-leg GTT can protect held positions.
-  - Margin, kill switch and order-rate budget are isolated from the other agent.
-- Optionally, Kite Connect (₹500/month) adds a second feed and MCX data.
+**Live (when the owner is ready):** the owner provides a separate account and its static IP. The execution adapter is chosen by config, `upstox` or `zerodha`. Facts for that decision:
 
-**Option B:** a shared Upstox broker-gateway service owns the app, token, static IP and order-rate budget for both agents. It couples the two agents and requires a combined risk ledger.
+| | Upstox | Zerodha |
+|---|---|---|
+| Brokerage | Plus: ₹30 or 0.1% per order, whichever is lower | ₹20 per order; Personal API free for orders |
+| Protecting a held position overnight | GTT needs an ENTRY leg, so it can't | Single-leg GTT can |
+| MCX via API | Reportedly disabled in Apr 2026 (verify) | Supported |
+| Data | 30-level depth, greeks in the feed, option-chain APIs | 5-level depth, no option-chain API |
 
-**Option C:** a separate Upstox account, for example in a family member's name under the family-IP rule. This is operationally and legally more complex.
+**Both brokers:** daily login (Upstox token approval on the phone; Kite TOTP), static IP for order endpoints, at most 10 orders/s without registration.
 
-**Paper phase:** only option A's data part is needed. No daily login, no static IP. **The exception is live 1-share probes** (Phase 2), which need the execution account, static IP and daily login. So §16 question 1 must be answered before Phase 2.
+**Account scope:** the system identifies its own orders by a tag prefix, and only tracks, reconciles and risk-manages those. Untagged orders and positions in the same account are ignored.
 
-**Daily login (live only):**
-- Upstox: token-request approval on your phone (around 08:00–08:50).
-- Kite: manual TOTP login.
-- No token by 09:00 means no new live entries that day (see §8 for overnight positions).
-- Never store TOTP seeds.
+**Daily login (live only):** approve by about 09:00; the system can wait until 09:20 without missing entries (§8). Never store TOTP seeds.
 
 ---
 
@@ -740,7 +777,7 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | Time | Step |
 |---|---|
 | 07:30 | Reference data and mapping |
-| 08:00 | Token request (live only) |
+| 08:30–09:20 | Token approval (live only) |
 | 08:30 | Pre-market brief |
 | 09:12 | In-play list finalised; subscriptions tiered |
 | Market hours | Trading |
@@ -750,11 +787,11 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | Evening | MCX session until the time stop |
 
 **Hosting:**
-- **Paper:** home or any VM. A home connection is better for NSE filings access.
-- **Live:** a Mumbai-region VM with an Elastic IP, plus a pre-registered backup IP and a standby VM. chrony time sync with alerts at 50 ms and a halt at 250 ms.
+- **Paper:** the owner's laptop. Keep it awake and on power during market hours (09:00–15:45) and, when MCX is enabled, until the evening time stop (§10). A home connection is also better for NSE filings access.
+- **Live (owner-managed):** a machine with a static IP, either a Mumbai-region cloud VM or a home static IP. The design needs: a static IP for orders, a stable clock (alerts at 50 ms offset, halt at 250 ms), reliable power and network, and ideally `deadman` on a second machine.
 
 **Security:**
-- Secrets in sops/age-encrypted files, never in YAML.
+- Secrets in a local, git-ignored `.env` file on the laptop (sops/age for a cloud deployment), never in YAML or the repository.
 - Telegram: chat-ID allowlist, PIN, **tighten-only commands**, separate bots for alerts and for commands.
 - Unsigned broker webhooks are verified by calling the API with the received token.
 - Every human override is audit-logged.
@@ -767,7 +804,7 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 **Compliance and tax:**
 - Retain order and LLM logs for at least 5 years.
 - Tag every fill with a tax bucket: SPEC (intraday cash), NONSPEC (F&O and commodities), STCG/BUSINESS (delivery).
-- Compute ICAI turnover per bucket, combined across both agents if they share a PAN.
+- Compute ICAI turnover per bucket for this system's trades. Combining it with any other activity under the same PAN is for the owner's CA.
 
 ---
 
@@ -775,29 +812,38 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 
 | Phase | When | Build | Exit criterion |
 |---|---|---|---|
-| **0: Foundations and recorder** | weeks 0–2 | Domain, ports, config, clock; instrument master and canonical mapping; session, holiday and cost tables; Upstox V3 feed on the Analytics Token; **recorder live**; data-quality dashboard | 10 clean recorded sessions; 30 levels confirmed; feed-lag distribution known |
-| **1: MVP paper, unattended** | weeks 2–5 | Features; in-play selector; day-type labeller; conservative paper broker; OMS and risk; **E1 + E2**; Telegram alerts and kill switch; daily report; counterfactual books; **LLM pre-market brief + triage in shadow** | A full unattended paper day; replay parity 100% |
-| **2: Live plumbing and module expansion** (probes need §16 Q1 answered) | weeks 5–8 | Live execution adapter on the chosen account, with **1-share probes**; reconciliation; dead-man process. LLM gating A/B test. E3 news-shock. **O1 in paper.** Rules-only scalping paper on depth-30 names. **MCX operations layer plus C1–C3 in paper.** | 2 weeks with zero reconciliation breaks; probes calibrating |
-| **3: First live** | about weeks 14–20 | The first setup to pass SPRT and probe calibration goes live at R = 0.25%, then ramps L1 → L2 → L3. Other setups follow as they pass. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades, so about week 16+. | Gates in §12 |
-| **4: Expansion** | months 4–6 | Scalping ML filter (after 50–100 recorded sessions); index-option scalps; swing module; MCX live; Jev and Haiku triage champion/challenger | Per-module gates |
+| **0: Foundations and recorder** | weeks 0–2 | Repository skeleton; domain, ports, config, clock; instrument master and canonical mapping; session, holiday and cost tables; Upstox V3 feed on the Analytics Token; **recorder live**; data-quality report; laptop supervisor, sleep prevention and backups; API keys wired (Anthropic, OpenRouter) | 10 clean recorded sessions; 30 levels confirmed; feed-lag distribution known |
+| **1: MVP paper, unattended** | weeks 2–5 | Features; in-play selector; day-type labeller; conservative paper broker; OMS and risk; **E1 + E2**; Telegram alerts and kill switch; daily report; counterfactual books; **LLM pre-market brief + triage bake-off in shadow** | A full unattended paper day; replay parity 100% |
+| **2: Module expansion (paper)** | weeks 5–10 | E3 news-shock; LLM gating A/B test; **O1** index options; rules-only scalping on depth-30 names; **MCX operations layer plus C1–C3**; **swing module** (automatic, critic-gated); O2 expiry-day in paper | Each module running unattended with zero risk breaches |
+| **3: Go-live preparation** | when the owner is ready; ideally from about week 10 | Live execution adapter for the owner's chosen broker (Upstox or Zerodha); reconciliation; `deadman`; owner sets up the static-IP host; **stage L0 probes** (2–3 weeks) | Calibration criteria met (§12) |
+| **4: First live** | about weeks 15–20 | The first setup to pass Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3. Other setups follow as they pass. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. | Gates in §12 |
+| **5: Expansion** | months 4–6+ | Scalping ML filter (after 50–100 recorded sessions); index-option scalps; MCX live; more agents only where they beat the baseline | Per-module gates |
 
 ---
 
-## 16. Open questions for the owner (with recommended defaults)
+## 16. Owner decisions (8 Oct 2026) and remaining questions
 
-1. **Account topology (§13).** Is the existing options agent on the same Upstox account and app? Will you fund a separate Zerodha account for this system's execution? *Default: yes to both; option A.*
-2. **Upstox plan details.** Is your brokerage on Plus ₹30 or 0.1% per order (check a contract note)? Does the other agent use any of the 50 depth-30 slots? Is it OK to generate an Analytics Token? *Default: confirm with Upstox first.*
-3. **Risk limits.** 2% intraday hard DLL, plus 1% overnight gap reserve, making 3% the worst day. R of 0.5%, ramped 0.25% → 0.375% → 0.5%. 15% maximum drawdown shutdown. *Default: as proposed.*
-4. **Shorts.** Intraday shorts in F&O stocks only? *Default: yes.*
-5. **Options in this system.** Long index options (O1) and the hedged expiry-day iron fly (O2), given that the other agent already sells options? *Default: O1 yes; O2 paper first, with a combined-exposure check.*
-6. **MCX.** Is positional holding allowed with the gap reserve? Is it OK to trade unattended until 22:40/23:15? Which broker for MCX? *Default: yes, small size; Zerodha if Upstox MCX API trading is off.*
-7. **Swing.** CNC only, with your approval for every overnight hold? *Default: yes.*
-8. **Monthly operating budget** (LLM + infrastructure + data)? A paid news or consensus feed? *Default: ≤ ₹10k during paper; no paid feeds yet.*
-9. **Availability.** Can you approve the token around 08:30 on live days? Approvals are needed only for swing and overnight trades. *Default: yes; otherwise a paper-only day.*
-10. **Hosting.** Paper at home, live on a Mumbai VM with a static IP? *Default: yes.*
-11. **Jev.** Do you have early access, or did you mean something else? *Default: start with Haiku for triage and add Jev as a shadow challenger.*
-12. **Timeline.** The first live setup around week 14–20 after statistical and calibration gates; 4–6 months or more before live scalping? *Default: yes.*
-13. **Manual trading** in the execution account? *Default: no. Untagged orders halt new entries.*
+| # | Topic | Owner's answer | Effect on the design |
+|---|---|---|---|
+| 1 | Other agents and accounts | The options-selling agent is separate and not running. This system is fully independent; live trading will use a separate account. | No shared-account constraints and no combined ledger (§6, §13). |
+| 2 | Upstox data | A new 1-year Analytics Token can be generated. This system is the main websocket user; other tools only call the market-quote API. | All 50 depth-30 slots are ours. REST limits are shared with those tools, so our REST use stays under 50% (§11). |
+| 3 | Risk | 2% intraday plus 1% overnight (3% worst day); R ramp 0.25% → 0.5%; **maximum drawdown 25%**. | Drawdown ladder extended; full stop at 25% (§6). |
+| 4 | Shorts | Intraday shorts in F&O stocks: yes. | Unchanged. |
+| 5 | Options | Run independently; ignore other agents. | Cross-agent exposure checks removed (§7.2). |
+| 6 | MCX | Small overnight positions and unattended evening trading are fine; Zerodha for live MCX if needed. | Unchanged; the live MCX broker is chosen at go-live (§13). |
+| 7 | Swing | No approval needed for good setups. | Automatic, gated by hard rules plus the Trade Critic (§7.5). |
+| 8 | Budget | ≤ ₹10k a month for LLM, servers and data during paper; no paid feeds. | Laptop hosting makes infrastructure about ₹0; LLM budget up to about ₹8.5k a month (§9). |
+| 9 | Live login | Approval can wait until about 09:00. | Paper needs no login; live entries can start as late as 09:20 without missing setups (§8, §13). |
+| 10 | Hosting | Paper on the owner's laptop; owner handles the static IP at go-live. | Laptop-friendly deployment (§10, §14). |
+| 11 | Jev | Available through OpenRouter; other small models are fine too. | OpenRouter adapter; triage bake-off (§7.3, §9). |
+| 12 | Manual trades | Ignore them; track only this system's orders. | Untagged orders and positions are ignored, never a halt (§10, §13). |
+
+**Default applied without an answer:** the paper cost model uses Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). That is conservative: a strategy that works at ₹30 also works at ₹20. It switches to the live account's tariff at go-live.
+
+**Remaining questions** (needed before Phase 0 starts; the defaults are workable):
+1. **Laptop:** operating system, RAM and free disk space? The recorder needs about 25–45 GB a month, or about 15–30 GB if only Parquet is kept. *Default: any OS, Python 3.12+, a data folder with ≥ 200 GB free or an external drive.*
+2. **API keys:** Anthropic, OpenRouter, OpenAI (for the critic), and a Telegram bot for alerts? *Default: Anthropic and OpenRouter now, OpenAI later, Telegram for alerts.*
+3. **Existing code:** do you have NSE/BSE scrapers or fundamentals clients (in another repository) worth reusing? *Default: write new adapters behind the ports.*
 
 ---
 
@@ -819,3 +865,13 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | 12 | [red-team-mcx-commodities](../research/12-red-team-mcx-commodities.md) | Corrections and build order for MCX |
 
 *Facts are as of 2026-10-08. Several are tagged medium or low confidence in the research and are marked "verify" here. Recheck them during Phase 0, because rules changed 7 times in the past 8 months.*
+
+---
+
+## 18. Change log
+
+| Version | Date | Change |
+|---|---|---|
+| v0.1 | 2026-10-08 | Initial synthesis of the 12 research reports |
+| v0.1.1 | 2026-10-08 | Corrections from an adversarial fact-and-math check (risk invariant sign, overnight reserve, minimum stops, gates, roadmap) |
+| v0.2 | 2026-10-08 | Owner decisions: independent system, laptop paper hosting, 25% maximum drawdown, automatic swing, OpenRouter/Jev bake-off, budget, live probes moved to go-live |
