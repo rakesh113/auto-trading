@@ -161,11 +161,17 @@ class FilingStore:
     def seen(self, key: str) -> bool:
         return self._db.execute("SELECT 1 FROM filings WHERE key=?", (key,)).fetchone() is not None
 
-    def material_candidates(self, since_ns: int, until_ns: int) -> list[tuple[str, int, str]]:
-        """(iid, first_seen_ns, key) of non-routine filings on mapped instruments in a window."""
-        cur = self._db.execute("SELECT iid, first_seen_ns, key FROM filings WHERE iid IS NOT NULL AND routine=0 "
-                               "AND first_seen_ns>? AND first_seen_ns<=? ORDER BY first_seen_ns", (since_ns, until_ns))
-        return list(cur)
+    def material_candidates(self, since_ns: int, until_ns: int, *, max_age_s: float | None = None
+                            ) -> list[tuple[str, int, str]]:
+        """(iid, first_seen_ns, key) of non-routine filings on mapped instruments first seen in a window.
+        `max_age_s` keeps only filings that were fresh when we saw them (excludes back-filled old news)."""
+        q = ("SELECT iid, first_seen_ns, key FROM filings WHERE iid IS NOT NULL AND routine=0 "
+             "AND first_seen_ns>? AND first_seen_ns<=?")
+        args: list[int] = [since_ns, until_ns]
+        if max_age_s is not None:
+            q += " AND first_seen_ns - ts_exchange_ns <= ?"
+            args.append(int(max_age_s * 1e9))
+        return list(self._db.execute(q + " ORDER BY first_seen_ns", args))
 
     def record_triage(self, key: str, model: str, ts_ns: int, latency_ms: float, cost: float | None,
                       result: dict[str, Any]) -> None:

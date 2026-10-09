@@ -53,3 +53,14 @@ def test_store_dedupes_and_windows(tmp_path) -> None:
     assert s.add(cross, "NSE:EQ:X")  # stored, but marked routine as a cross-listed duplicate
     assert [k for *_x, k in s.material_candidates(0, 1000)] == ["NSE:1"]
     assert s.material_candidates(100, 1000) == []  # window excludes first_seen == since
+
+
+def test_backfilled_old_news_is_not_fresh(tmp_path) -> None:
+    s = FilingStore(tmp_path / "f.sqlite")
+    old = Filing("NSE", "9", "X", "INE9", "X", "Acquisition", "Old deal", "", "", ts_exchange_ns=0,
+                 first_seen_ns=int(3600e9))
+    fresh = Filing("NSE", "10", "Y", "INE10", "Y", "Acquisition", "New deal", "", "", ts_exchange_ns=int(3590e9),
+                   first_seen_ns=int(3600e9))
+    s.add(old, "NSE:EQ:X")
+    s.add(fresh, "NSE:EQ:Y")
+    assert [k for *_x, k in s.material_candidates(0, int(4000e9), max_age_s=600)] == ["NSE:10"]

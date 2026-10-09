@@ -242,7 +242,7 @@ class Engine:
         since = self._news_ns or upto - int(self.blackout_min * 60e9)
         if upto <= since:
             return
-        for iid_s, seen_ns, key in self.news.material_candidates(since, upto):
+        for iid_s, seen_ns, key in self.news.material_candidates(since, upto, max_age_s=600):
             iid = InstrumentId.parse(iid_s)
             until = seen_ns + int(self.blackout_min * 60e9)
             if until > self._blackout.get(iid, 0):
