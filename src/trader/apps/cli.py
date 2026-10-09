@@ -60,6 +60,22 @@ async def _check(args: argparse.Namespace) -> int:
         ok = False
     finally:
         await http.aclose()
+    import httpx
+
+    async with httpx.AsyncClient(timeout=15) as c:
+        try:
+            r = await c.get(f"{cfg.llm.base_url}/key", headers={"Authorization": f"Bearer {secret(cfg.llm.api_key_env)}"})
+            d = r.json().get("data", {})
+            print(f"openrouter key: HTTP {r.status_code}, limit_remaining=${d.get('limit_remaining')}")
+        except Exception as e:  # noqa: BLE001
+            print("openrouter key:", e)
+        if cfg.notifier.provider == "telegram":
+            try:
+                r = await c.get(f"https://api.telegram.org/bot{secret('TELEGRAM_BOT_TOKEN')}/getMe")
+                print("telegram bot:", r.json().get("result", {}).get("username") if r.json().get("ok") else r.text)
+            except Exception as e:  # noqa: BLE001
+                print("telegram:", e)
+                ok = False
     cfg.system.data_dir.mkdir(parents=True, exist_ok=True)
     print("data_dir writable: ok")
     return 0 if ok else 1

@@ -14,7 +14,8 @@ from trader.domain.instrument import InstrumentId
 
 def test_paper_profile_builds_paper_trader(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("UPSTOX_ANALYTICS_TOKEN", "x")
-    cfg = load_config("paper", overrides={"system": {"data_dir": str(tmp_path)}}, env_file=None)
+    cfg = load_config("paper", overrides={"system": {"data_dir": str(tmp_path)}, "notifier": {"provider": "log"}},
+                      env_file=None)
     app = build_app(cfg, with_feed=False)
     assert isinstance(app.trader, PaperTrader)
 

@@ -29,6 +29,21 @@ class LLMResult:
     latency_ms: float
 
 
+def extract_json(text: str) -> Any | None:
+    """Parse a JSON object from model output, tolerating code fences or leading prose."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        try:
+            return json.loads(text[start:end + 1])
+        except ValueError:
+            return None
+    return None
+
+
 @llm_providers.register("openrouter")
 class OpenRouterProvider:
     def __init__(self, *, api_key_env: str = "OPENROUTER_API_KEY", base_url: str = "https://openrouter.ai/api/v1",
@@ -44,9 +59,13 @@ class OpenRouterProvider:
         await self._client.aclose()
 
     async def generate(self, model: str, messages: list[dict[str, str]], *, schema: dict[str, Any] | None = None,
-                       max_tokens: int = 1024, temperature: float = 0.0, timeout_s: float = 30.0) -> LLMResult:
+                       max_tokens: int = 1024, temperature: float = 0.0, timeout_s: float = 30.0,
+                       reasoning: dict[str, Any] | None = None) -> LLMResult:
+        """`reasoning` defaults to disabled: hidden reasoning tokens otherwise consume `max_tokens`
+        and truncate structured answers (seen with Haiku 5.5). Pass e.g. {"effort": "high"} to enable."""
         body: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens,
-                                "temperature": temperature, "usage": {"include": True}}
+                                "temperature": temperature, "usage": {"include": True},
+                                "reasoning": reasoning if reasoning is not None else {"enabled": False}}
         if schema is not None:
             body["response_format"] = {"type": "json_schema",
                                        "json_schema": {"name": "output", "strict": True, "schema": schema}}
@@ -58,10 +77,7 @@ class OpenRouterProvider:
         usage = data.get("usage") or {}
         parsed = None
         if schema is not None:
-            try:
-                parsed = json.loads(text)
-            except ValueError:
-                parsed = None
+            parsed = extract_json(text)
         return LLMResult(model=data.get("model", model), text=text, parsed=parsed,
                          prompt_tokens=int(usage.get("prompt_tokens", 0)),
                          completion_tokens=int(usage.get("completion_tokens", 0)),

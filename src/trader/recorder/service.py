@@ -24,12 +24,14 @@ from trader.core.app import build_app
 from trader.core.calendar import MarketCalendar, fetch_holidays
 from trader.core.clock import WallClock
 from trader.core.config import AppConfig, secret
+from trader.core.registry import notifiers
 from trader.core.universe import build_recording_plan, index_constituents, option_window
 from trader.domain.instrument import InstrumentId
 from trader.domain.market import FeedState, MarketEvent, Quote
 from trader.domain.types import IST, Exchange, FeedMode
 from trader.ops.power import keep_awake
 from trader.ports.clock import now_ist
+from trader.ports.infra import Severity
 from trader.recorder.bronze import BronzeRecorder
 
 log = structlog.get_logger(__name__)
@@ -45,6 +47,7 @@ class _SpotTracker:
         self.last: dict[InstrumentId, int] = {}
         self.events = 0
         self.states: list[str] = []
+        self.alerted_down = False
 
     def __call__(self, ev: MarketEvent) -> None:
         self.events += 1
@@ -122,6 +125,7 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
     for m in want.values():
         counts[m.value] = counts.get(m.value, 0) + 1
     log.info("recorder.plan", counts=counts, unmapped=len(plan.missing))
+    notify = app.notifier.notify
 
     status_path = data_dir / "status" / "recorder.json"
     status_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +135,9 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
         log.info("recorder.keep_awake", active=awake)
         await app.start(load_master=False)
         await feed.set_subscriptions(want)
+        await notify(f"Recorder started {today}: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
         last_recenter = asyncio.get_running_loop().time()
+        down_checks = 0
         try:
             while now_ist(_CLOCK) < stop_at:
                 await asyncio.sleep(min(30, max(0.1, (stop_at - now_ist(_CLOCK)).total_seconds())))
@@ -145,6 +151,13 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
                 }
                 status_path.write_text(json.dumps(status, indent=1), encoding="utf-8")
                 log.info("recorder.status", **{k: v for k, v in status.items() if k != "recent_states"})
+                down_checks = 0 if h.connected else down_checks + 1
+                if down_checks == 2:  # ~1 minute without the full set of sockets
+                    await notify(f"Recorder feed DOWN for ~1 min (reconnects={h.reconnects})", Severity.WARN)
+                    tracker.alerted_down = True
+                elif down_checks == 0 and tracker.alerted_down:
+                    await notify("Recorder feed recovered")
+                    tracker.alerted_down = False
                 if asyncio.get_running_loop().time() - last_recenter >= recenter_s:
                     last_recenter = asyncio.get_running_loop().time()
                     g = await greeks_want()
@@ -158,8 +171,19 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
                             log.info("recorder.recentered", greeks=len(g))
         finally:
             await app.stop()
+    h = feed.health()
+    await notify(f"Recorder day done {today}: frames={h.frames:,} reconnects={h.reconnects} "
+                 f"written={recorder.written:,} dropped={recorder.dropped}. Run `trader dq` for the report.")
     return {"frames": feed.health().frames, "written": recorder.written, "dropped": recorder.dropped,
             "unmapped": plan.missing}
+
+
+async def _alert(cfg: AppConfig, text: str) -> None:
+    try:
+        ncls = notifiers.get(cfg.notifier.provider)
+        await ncls(**cfg.notifier.settings.get(cfg.notifier.provider, {})).notify(text, Severity.CRITICAL)
+    except Exception:  # noqa: BLE001 - alerting must never crash the recorder
+        log.exception("recorder.alert_failed")
 
 
 async def run_forever(cfg: AppConfig) -> None:
@@ -178,10 +202,12 @@ async def run_forever(cfg: AppConfig) -> None:
             try:
                 summary = await record_day(cfg)
                 log.info("recorder.day_done", **{k: v for k, v in summary.items() if k != "unmapped"})
-            except Exception:
+            except Exception as e:
                 log.exception("recorder.day_failed")
+                await _alert(cfg, f"Recorder FAILED: {e!r}. Retrying in 30 s.")
                 await asyncio.sleep(30)  # retry within the session; the supervisor also restarts us
                 continue
+            return  # exit after the session so the supervisor restarts us on the latest code
         nxt_day = today + timedelta(days=1)
         if nxt_day.year != today.year:
             await fetch_holidays(http, ref, nxt_day.year)
