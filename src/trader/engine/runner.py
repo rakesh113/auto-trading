@@ -195,12 +195,30 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
     journal = Journal(data_dir / "journal" / f"{day.isoformat()}.sqlite")
     ledgers = {name: BookLedger.load(data_dir, name, to_paise(RiskConfig.load(CONFIG_DIR / "risk.yaml").equity_inr))
                for name, _ in BOOKS}
+    carried = _prior_session(journal)
     engine = build_engine(cfg, day, clock, master, contexts, journal, notify=notify, ledgers=ledgers)
+    if carried["restarted"]:
+        # In-memory positions from before the restart are gone. Be conservative and honest:
+        # lock both books for the day, carry the realized P&L, and tell the owner.
+        for b in engine.books:
+            b.status.locked = True
+        journal.write(clock.now_ns(), "*", "restart", {"orphans": carried["orphans"]})
+        notify(f"Paper process restarted mid-session; books locked for the rest of {day}. "
+               f"Abandoned open paper positions: {', '.join(carried['orphans']) or 'none'}.", Severity.WARN)
     feed = LocalFrameFeed(master=master, clock=clock, port=cfg.recorder.broadcast_port)
     await feed.start()
-    notify(f"Paper trading started {day}: {len(engine.states)} symbols, books A (gated) and B (baseline), "
-           f"setups {', '.join(SETUPS)}")
+    if not carried["restarted"]:
+        notify(f"Paper trading started {day}: {len(engine.states)} symbols, books A (gated) and B (baseline), "
+               f"setups {', '.join(SETUPS)}")
     end = datetime.combine(day, time(15, 25), IST)
+
+    last_alert = [0]
+
+    def failed(where: str) -> None:
+        log.exception("paper.engine_error", where=where)
+        if wall.now_ns() - last_alert[0] > 600e9:  # at most one alert per 10 minutes
+            last_alert[0] = wall.now_ns()
+            notify(f"Paper engine error in {where}; continuing. See logs.", Severity.WARN)
 
     async def heartbeat() -> None:
         while not engine.ended:
@@ -208,7 +226,10 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
             now = wall.now_ns()
             if now > clock.now_ns() + 1_500_000_000:
                 clock.set(now)
-                await engine.on_time(now)
+                try:
+                    await engine.on_time(now)
+                except Exception:  # noqa: BLE001
+                    failed("on_time")
 
     hb = asyncio.create_task(heartbeat())
     bot_task = _start_command_bot(cfg, engine, clock, journal)
@@ -217,7 +238,10 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
             ts = getattr(ev, "ts_recv_ns", 0)
             if ts > clock.now_ns():
                 clock.set(ts)
-            await engine.on_event(ev)
+            try:
+                await engine.on_event(ev)
+            except Exception:  # noqa: BLE001 - one bad event must not end the session
+                failed("on_event")
             if engine.ended or clock.now_ns() >= end.timestamp() * 1e9:
                 break
     finally:
@@ -227,6 +251,12 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
         await feed.stop()
         await drain_all(engine)
     summary = engine.summary()
+    for name, b in summary["books"].items():
+        b["pnl"] += carried["realized"].get(name, 0) / 100
+        b["realized"] += carried["realized"].get(name, 0) / 100
+        b["trades"] += carried["trades"].get(name, 0)
+        b["wins"] += carried["wins"].get(name, 0)
+    summary["restarted"] = carried["restarted"]
     for name, led in ledgers.items():
         b = summary["books"][name]
         led.close_day(day, round(b["pnl"] * 100), {"trades": b["trades"], "wins": b["wins"]})
@@ -238,6 +268,27 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
     await send_daily_report(cfg, day, summary, notifier)
     await asyncio.gather(*pending, return_exceptions=True)
     return summary
+
+
+def _prior_session(journal: Journal) -> dict[str, Any]:
+    """What an earlier run of today's session left in the journal (crash/restart recovery)."""
+    rows = journal.rows()
+    out: dict[str, Any] = {"restarted": any(k == "order" for _t, _b, k, _d in rows),
+                           "realized": {}, "trades": {}, "wins": {}, "orphans": []}
+    if not out["restarted"]:
+        return out
+    entered: dict[str, str] = {}
+    closed: set[str] = set()
+    for _t, book, kind, d in rows:
+        if kind == "fill" and d.get("role") == "entry":
+            entered[d["trade"]] = f"{book}:{d['fill']['iid'].split(':')[2]}"
+        elif kind == "trade_closed":
+            closed.add(d["trade"])
+            out["realized"][book] = out["realized"].get(book, 0) + d["net"]
+            out["trades"][book] = out["trades"].get(book, 0) + 1
+            out["wins"][book] = out["wins"].get(book, 0) + int(d["net"] > 0)
+    out["orphans"] = sorted({v for k, v in entered.items() if k not in closed})
+    return out
 
 
 def _start_command_bot(cfg: AppConfig, engine: Engine, clock: Any, journal: Journal) -> asyncio.Task[None] | None:
