@@ -30,9 +30,28 @@ Override machine-specific settings in `config/local.yaml` (git-ignored).
 | `trader record` | Daily recorder, forever: waits for each trading day, records 08:50–15:50 IST |
 | `trader record-now --minutes N` | Record from now for N minutes (smoke test) |
 | `trader dq [--date YYYY-MM-DD]` | Data-quality report for a recorded day |
+| `trader eod [--date YYYY-MM-DD]` | Silver Parquet + quality verdict + raw-file retention + backup (runs automatically after each session) |
 | `trader supervise` | Run and restart the long-running services |
 
-Start everything at logon: `powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1`.
+### Running it unattended
+
+The supervisor runs from a separate **runtime copy** of `main` (`..uto-trading-run`), so work on development branches never touches what is recording or trading. After merging to `main`, deploy outside market hours:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\deploy-runtime.ps1 -Restart
+```
+
+This updates the runtime copy, registers the logon task, and restarts the services. Telegram receives start, feed-down, recovery and end-of-day messages (with the data-quality verdict).
+
+### Data on disk
+
+| Tier | Where | Kept | Size |
+|---|---|---|---|
+| Raw frames (bronze) | `data_dir/bronze/<date>/` | `recorder.bronze_retention_days` (30) | ~0.85 GB per day |
+| Parquet (silver) | `data_dir/silver/<date>/` | indefinitely | ~0.5 GB per day |
+| Reports, reference | `data_dir/reports`, `data_dir/reference` | indefinitely | small |
+
+Set `recorder.backup_dir` in `config/local.yaml` to copy silver, reference and reports to another drive after each session. You get an alert when free space drops below `recorder.min_free_gb`.
 
 ## Paper or live: one config switch
 

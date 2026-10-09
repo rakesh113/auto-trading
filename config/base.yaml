@@ -61,9 +61,9 @@ llm:
   budget_inr_month: 8500
   budget_inr_day: 400
   routes:                        # OpenRouter model ids, verified 2026-10-09
-    # typesafe/jev-router is a router, not Jev itself: on 2026-10-09 it served DeepSeek v4.1 Flash
-    # and ignored response_format. typesafe/jev-latest is "not a valid model ID" on this key.
-    triage:     {bakeoff: [anthropic/claude-haiku-5.5, typesafe/jev-router, "<small-model-id>"], timeout_s: 8}
+    # Jev is a decisions model on OpenRouter's /api/alpha/decisions endpoint (trader.intel.decisions),
+    # not chat/completions. typesafe/jev-router is a generic router (served DeepSeek); not used.
+    triage:     {bakeoff: ["decisions:jev:typesafe/jev-1.13", anthropic/claude-haiku-5.5], timeout_s: 8}
     strategist: {primary: anthropic/claude-opus-5.5}
     planner:    {primary: anthropic/claude-sonnet-5.5}
     critic:     {primary: "<other-vendor-model>", fallback: anthropic/claude-opus-5.5}

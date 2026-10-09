@@ -102,7 +102,9 @@ class RecorderCfg(_Model):
     rotate_minutes: int = 15
     zstd_level: int = 3
     flush_every_s: float = 2.0
-    bronze_retention_days: int = 30
+    bronze_retention_days: int = 30  # raw frames; silver Parquet is kept indefinitely
+    backup_dir: Path | None = None  # e.g. an external drive or a synced folder; None disables
+    min_free_gb: float = 50.0  # alert when the data drive drops below this
 
 
 class NotifierCfg(_Model):

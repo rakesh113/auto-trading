@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import Any
 
 from trader.adapters.upstox.decode import decode_frame
 from trader.adapters.upstox.feed import KIND_FRAME, KIND_STATE
-from trader.domain.market import Quote
+from trader.domain.market import MarketEvent, Quote
 from trader.domain.types import IST, FeedMode
 from trader.recorder.bronze import read_frames
 
@@ -47,7 +48,14 @@ class StreamStats:
     per_minute: Counter[str] = field(default_factory=Counter)
 
 
-def analyze_day(data_dir: Path, day: date) -> dict[str, Any]:
+Sink = Callable[[str, list[MarketEvent]], None]
+
+
+def analyze_day(data_dir: Path, day: date, *, resolve: Callable[[str], Any] | None = None,
+                sink: Sink | None = None) -> dict[str, Any]:
+    """One pass over a day's bronze files. `sink(stream, events)` receives every decoded
+    frame, so the silver writer can share this pass instead of decoding twice."""
+    resolver = resolve or (lambda _k: None)
     root = Path(data_dir) / "bronze" / day.isoformat()
     if not root.exists():
         raise FileNotFoundError(root)
@@ -70,18 +78,22 @@ def analyze_day(data_dir: Path, day: date) -> dict[str, Any]:
                 last_ts = ts
                 st.per_minute[f"{datetime.fromtimestamp(ts / 1e9, IST):%H:%M}"] += 1
                 try:
-                    events = decode_frame(payload, ts, lambda _k: None)
+                    events = decode_frame(payload, ts, resolver)
                 except Exception:  # noqa: BLE001
                     st.decode_errors += 1
                     continue
+                if sink is not None:
+                    sink(sdir.name, events)
+                lag_done = False
                 for ev in events:
                     if not isinstance(ev, Quote):
                         continue
                     st.quotes += 1
                     st.keys.add(ev.native)
                     st.modes[ev.mode.value] += 1
-                    if ev.ts_server_ms:
+                    if ev.ts_server_ms and not lag_done:  # one lag sample per frame
                         st.lag_ms.append(ts / 1e6 - ev.ts_server_ms)
+                        lag_done = True
                     if ev.mode is FeedMode.FULL_D30 and not ev.snapshot:
                         st.d30_levels[max(len(ev.bids), len(ev.asks))] += 1
                     if ev.bids and ev.asks and ev.bids[0].price >= ev.asks[0].price:
@@ -126,6 +138,24 @@ def render(report: dict[str, Any]) -> str:
         if s["states"]:
             lines.append(f"  connection events: {s['states'][-5:]}")
         lines.append("")
-    lines.append("CLEAN" if defects == 0 else f"{defects} defect(s)")
+    lines.append(verdict(report) if defects == 0 else f"{defects} defect(s): {verdict(report)}")
     return "\n".join(lines)
+
+
+def verdict(report: dict[str, Any]) -> str:
+    """One line for Telegram: CLEAN, or the defects found."""
+    problems = []
+    for name, s in report["streams"].items():
+        if s["decode_errors"]:
+            problems.append(f"{name}: {s['decode_errors']} decode errors")
+        if s["gaps_over_5s_in_market"]:
+            problems.append(f"{name}: {s['gaps_over_5s_in_market']} gaps >5s")
+        hist = s["d30_levels_hist"]
+        total = sum(hist.values())
+        if total and sum(v for k, v in hist.items() if int(k) >= 30) / total < 0.5:
+            problems.append(f"{name}: depth-30 not arriving")
+        p95 = s["lag_ms"]["p95"]
+        if p95 is not None and p95 > 2000:
+            problems.append(f"{name}: lag p95 {p95:.0f} ms")
+    return "CLEAN" if not problems else "DEFECTS: " + "; ".join(problems)
 

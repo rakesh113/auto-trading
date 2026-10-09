@@ -1,10 +1,11 @@
 # Registers the supervisor to start at logon and restart if it dies (design §10, laptop operation).
-# Run once from an elevated PowerShell in the repo root:
-#   powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1
+# Normally called by deploy-runtime.ps1 with -RunDir pointing at the runtime copy. Standalone:
+#   powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1 [-RunDir <folder>]
 # Remove with:  Unregister-ScheduledTask -TaskName "AutoTrading-Supervisor" -Confirm:$false
 
+param([string]$RunDir = "")
 $ErrorActionPreference = "Stop"
-$repo = (Resolve-Path "$PSScriptRoot\..\..").Path
+$repo = if ($RunDir) { (Resolve-Path $RunDir).Path } else { (Resolve-Path "$PSScriptRoot\..\..").Path }
 $python = Join-Path $repo ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) { throw "venv not found at $python. Run: python -m venv .venv; .venv\Scripts\pip install -e .[dev]" }
 
