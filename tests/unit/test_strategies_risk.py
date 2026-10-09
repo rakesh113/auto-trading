@@ -150,3 +150,18 @@ def test_kill_on_daily_loss(risk) -> None:
     b = _book()
     b.realized = -2_000_000  # −₹20k = 2% DLL
     assert "daily loss" in risk.should_flatten(b)
+
+
+def test_fno_ban_and_price_band(risk) -> None:
+    st = _state(300600)
+    assert _eval(risk, _sig(300000, 301200, Side.SELL), st, _book(), banned=True).rule == "fno_ban"
+    d = _eval(risk, _sig(300600, 299450), st, _book(), banned=True)
+    assert d.approved and d.size_mult == 0.5
+    assert _eval(risk, _sig(300600, 299450), st, _book(), band=(240000, 302000)).rule == "price_band"
+
+
+def test_parse_ban_list() -> None:
+    from trader.market.reference import parse_ban
+
+    assert parse_ban("Securities in Ban For Trade Date 09-OCT-2026:\n1,AMBUJACEM\n2,BANDHANBNK\n") == {
+        "AMBUJACEM", "BANDHANBNK"}

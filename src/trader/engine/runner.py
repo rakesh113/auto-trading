@@ -35,6 +35,7 @@ from trader.domain.types import IST, Exchange, InstrumentKind, to_paise
 from trader.engine.session import Book, Engine, drain_all
 from trader.intel.filings import FilingStore
 from trader.market.history import ContextStore, fetch_contexts
+from trader.market.reference import DayReference, ensure_day_reference
 from trader.oms.journal import Journal
 from trader.oms.manager import OrderManager
 from trader.ports.infra import Severity
@@ -90,6 +91,20 @@ class BookLedger:
                                         indent=1), encoding="utf-8")
 
 
+def _http(cfg: AppConfig) -> UpstoxHttp:
+    return UpstoxHttp(secret(cfg.upstox.analytics_token_env), api_base=cfg.upstox.api_base,
+                      rest_per_sec=cfg.upstox.rest_per_sec)
+
+
+async def load_dayref(cfg: AppConfig, master: UpstoxInstrumentMaster, day: date, contexts: dict[str, Any],
+                      *, fetch: bool) -> DayReference | None:
+    path = Path(cfg.system.data_dir) / "reference" / f"dayref-{day.isoformat()}.json"
+    if not fetch:
+        return DayReference.load(path) if path.exists() else None
+    iids = [InstrumentId.parse(k) for k in contexts if k.startswith("NSE:EQ:")]
+    return await ensure_day_reference(cfg.system.data_dir, day, lambda: _http(cfg), master, iids)
+
+
 async def ensure_contexts(cfg: AppConfig, master: UpstoxInstrumentMaster, day: date) -> dict[str, Any]:
     store = ContextStore(cfg.system.data_dir)
     if store.path(day).exists():
@@ -117,7 +132,8 @@ def load_master(cfg: AppConfig, day: date) -> UpstoxInstrumentMaster:
 
 
 def build_engine(cfg: AppConfig, day: date, clock: Any, master: UpstoxInstrumentMaster, contexts: dict[str, Any],
-                 journal: Journal, *, notify: Any = None, ledgers: dict[str, BookLedger] | None = None) -> Engine:
+                 journal: Journal, *, notify: Any = None, ledgers: dict[str, BookLedger] | None = None,
+                 dayref: DayReference | None = None) -> Engine:
     risk_cfg = RiskConfig.load(CONFIG_DIR / "risk.yaml")
     paper = PaperSettings(**cfg.venue_settings("paper"))
     costs = CostModel.load(CONFIG_DIR / "costs.yaml", paper.cost_profile)
@@ -140,7 +156,8 @@ def build_engine(cfg: AppConfig, day: date, clock: Any, master: UpstoxInstrument
     news_db = Path(cfg.system.data_dir) / "intel" / "filings.sqlite"
     news = FilingStore(news_db) if news_db.exists() else None
     return Engine(clock=clock, day=day, master=master, contexts=contexts, sectors=sectors, shortable=shortable,
-                  risk=risk, journal=journal, books=books, index_iid=INDEX, vix_iid=VIX, notify=notify, news=news)
+                  risk=risk, journal=journal, books=books, index_iid=INDEX, vix_iid=VIX, notify=notify, news=news,
+                  dayref=dayref)
 
 
 # ---- replay -----------------------------------------------------------------------------------
@@ -152,7 +169,8 @@ async def replay_day(cfg: AppConfig, day: date, *, journal_path: Path | None = N
     start = int(datetime.combine(day, time(9, 0), IST).timestamp() * 1e9)
     clock = SimClock(start)
     journal = Journal(journal_path)
-    engine = build_engine(cfg, day, clock, master, contexts, journal)
+    dayref = await load_dayref(cfg, master, day, contexts, fetch=False)
+    engine = build_engine(cfg, day, clock, master, contexts, journal, dayref=dayref)
     for ev in ReplayFeed(cfg.system.data_dir, day, master, clock, start_ns=start):
         await engine.on_event(ev)
     end = int(datetime.combine(day, time(15, 30), IST).timestamp() * 1e9)
@@ -196,7 +214,8 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
     ledgers = {name: BookLedger.load(data_dir, name, to_paise(RiskConfig.load(CONFIG_DIR / "risk.yaml").equity_inr))
                for name, _ in BOOKS}
     carried = _prior_session(journal)
-    engine = build_engine(cfg, day, clock, master, contexts, journal, notify=notify, ledgers=ledgers)
+    dayref = await load_dayref(cfg, master, day, contexts, fetch=True)
+    engine = build_engine(cfg, day, clock, master, contexts, journal, notify=notify, ledgers=ledgers, dayref=dayref)
     if carried["restarted"]:
         # In-memory positions from before the restart are gone. Be conservative and honest:
         # lock both books for the day, carry the realized P&L, and tell the owner.

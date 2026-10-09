@@ -39,3 +39,4 @@ drawdown_ladder:               # drawdown from high-water mark → size multipli
 drawdown_stop_pct: 25.0
 stop_attach_s: 5               # broker-side stop must exist within this many seconds of a fill
 stale_feed_s: 5                # no new entries when the symbol's data is older than this
+band_buffer_pct: 1.0           # no new entries within this % of the day's price band

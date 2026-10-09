@@ -71,6 +71,7 @@ class Engine:
     vix_iid: InstrumentId | None = None
     notify: Callable[[str], None] | None = None
     news: Any = None  # FilingStore: non-routine filings impose a blackout on the symbol
+    dayref: Any = None  # DayReference: F&O ban list and price bands
     blackout_min: int = 15
     states: dict[InstrumentId, SymbolState] = field(default_factory=dict)
     primary: list[Scored] = field(default_factory=list)
@@ -215,7 +216,9 @@ class Engine:
                 if self._blackout.get(sig.iid, 0) > self.clock.now_ns():
                     gate = "news blackout (fresh filing, not yet assessed)"
                 d = self.risk.evaluate(sig, st, status, now_ns=self.clock.now_ns(), minute=bar.start_min + 1,
-                                       shortable=sig.iid in self.shortable, day=self.day, gate_reason=gate)
+                                       shortable=sig.iid in self.shortable, day=self.day, gate_reason=gate,
+                                       banned=bool(self.dayref and sig.iid.symbol in self.dayref.ban),
+                                       band=self.dayref.band(sig.iid) if self.dayref else None)
                 self.journal.write(self.clock.now_ns(), b.name, "signal", {
                     "setup": sig.setup, "iid": str(sig.iid), "side": sig.side.value, "entry": sig.entry,
                     "stop": sig.stop, "targets": [(t.fraction, t.price) for t in sig.targets],

@@ -61,6 +61,7 @@ class RiskConfig(BaseModel):
     drawdown_stop_pct: float
     stop_attach_s: float
     stale_feed_s: float
+    band_buffer_pct: float = 1.0
 
     @classmethod
     def load(cls, path: Path) -> RiskConfig:
@@ -160,7 +161,8 @@ class RiskEngine:
     # ---- the decision -------------------------------------------------------------------
 
     def evaluate(self, sig: Signal, st: SymbolState, b: BookStatus, *, now_ns: int, minute: int,
-                 shortable: bool, day: date, gate_reason: str = "") -> Decision:
+                 shortable: bool, day: date, gate_reason: str = "", banned: bool = False,
+                 band: tuple[int, int] | None = None) -> Decision:
         c = self.cfg
         dll = self.dll(b)
         if gate_reason:
@@ -183,6 +185,11 @@ class RiskEngine:
             return Decision.veto("cooloff", "cool-off after losing streak")
         if sig.side is Side.SELL and not shortable:
             return Decision.veto("short_not_allowed", "shorts only in F&O stocks")
+        if sig.side is Side.SELL and banned:
+            return Decision.veto("fno_ban", "F&O ban: cash longs only")
+        if band is not None and (sig.entry >= band[1] * (1 - c.band_buffer_pct / 100)
+                                 or sig.entry <= band[0] * (1 + c.band_buffer_pct / 100)):
+            return Decision.veto("price_band", f"within {c.band_buffer_pct}% of a price band {band}")
         if now_ns - st.last_ts > c.stale_feed_s * 1e9:
             return Decision.veto("stale", "symbol data stale")
         if b.equity_module_loss >= c.equity_module_frac * dll:
@@ -198,6 +205,9 @@ class RiskEngine:
             return Decision.veto("stop_floor", f"stop {dist / 100:.2f} < floor {floor / 100:.2f}")
 
         mult, why = self.size_multiplier(b, now_ns)
+        if banned:
+            mult = min(mult, 0.5)
+            why = ", ".join(x for x in (why, "F&O ban") if x)
         r_paise = b.equity * c.r_pct / 100 * mult
         # costs per share: statutory + brokerage for a round trip at this price, plus spread and slippage
         qty0 = max(int(r_paise // dist), 1)
