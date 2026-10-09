@@ -35,7 +35,7 @@ Override machine-specific settings in `config/local.yaml` (git-ignored).
 
 ### Running it unattended
 
-The supervisor runs from a separate **runtime copy** of `main` (`..uto-trading-run`), so work on development branches never touches what is recording or trading. After merging to `main`, deploy outside market hours:
+The supervisor runs from a separate **runtime copy** of `main` (`..\auto-trading-run`), so work on development branches never touches what is recording or trading. After merging to `main`, deploy outside market hours:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File deploy\windows\deploy-runtime.ps1 -Restart
