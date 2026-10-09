@@ -1,9 +1,16 @@
-# AI Trading Desk: System Design v0.2
+# AI Trading Desk: System Design v0.3
 
-**Status:** v0.2, the spec we build from. It incorporates the owner's decisions of 8 Oct 2026 (§16). Design only; no code yet.
+**Status:** v0.3, the spec we build from. It incorporates the owner's decisions of 8 and 9 Oct 2026 (§16). **How trades are decided is specified in [`ai-trader.md`](ai-trader.md)**; where the two documents differ on that, `ai-trader.md` wins.
 **Date:** 2026-10-08.
 **Inputs:** 12 specialist and red-team reports in [`docs/research/`](../research/). They carry verified facts with sources and confidence tags. Where reports disagreed, this document uses the value the red team corrected.
 **Scope:** a **fully independent system**. It tracks and risk-manages only the orders it places, and ignores other agents, strategies and manual trades. It starts as live paper trading on the owner's laptop. The owner provides a separate account and static IP when it goes live.
+
+**What changed in v0.3** (owner decision, 9 Oct 2026):
+- **The LLM is the trader**, not a filter on fixed rule strategies. It writes the pre-market game plan, decides at code-detected moments (just before triggers, so execution is instant) and manages its positions. Rules become its eyes, its entry tactics and a rules-only control book. Full design: [`ai-trader.md`](ai-trader.md).
+- **An arena** runs several approaches side by side in paper on the same moments: the LLM trader, a chart twin on probation, a cheap Haiku shadow, and free counterfactual books (rules control, veto value, management ablation, placebo).
+- **Selection skill is the primary metric**, with pre-registered kill and success criteria. Week 8 decides kill-or-continue; "rely on it" needs at least 6 months.
+- **Charts:** numbers stay the source of truth; a chart twin is tested under a pre-registered keep/drop rule.
+- **LLM budget ₹5–7k a month** initially (≈ ₹4.1k core, ≈ ₹6.6k with the chart twin and contingency).
 
 **What changed in v0.2:**
 - **Independence:** no shared-account constraints and no combined ledger with other agents. Reconciliation covers only this system's own tagged orders (§6, §10, §13).
@@ -21,8 +28,8 @@
 
 | # | Decision | Main reason |
 |---|---|---|
-| D1 | **The LLM is the strategist and analyst, and it can only narrow what the system does.** Rule engines plus small ML models act as the trader. Deterministic code acts as risk manager (with veto) and execution desk. | LLM latency and non-determinism; LLM decisions on pre-cutoff history can't be honestly backtested. |
-| D2 | **Two-speed loop: Plan → Permit → Trigger.** The LLM writes plans over minutes. Plans become immutable, expiring permits. Rules and ML fire triggers in milliseconds inside those permits. | Gives discretionary judgement and scalping speed in one design. |
+| D1 | **The LLM is the trader** ([`ai-trader.md`](ai-trader.md)). It plans the day, decides at code-detected moments and manages positions. Code is its eyes (watchers, rule library, scanners), its hands (entry tactics, OMS) and its seatbelt (risk). **The LLM can never loosen a risk limit:** code sizes, size can only shrink from the LLM's request, and stops and flatten times are code. | Owner decision. Naive rule strategies don't hold an edge; judgment is the edge. Discipline stays deterministic. |
+| D2 | **Plan the trade, trade the plan.** An Opus game plan writes IF-THEN scenarios per stock; code watches them; the LLM decides *as price approaches* a trigger; code executes the armed order the moment it fires; management is event-driven. | Discretionary judgement without LLM latency in the entries. |
 | D3 | **Costs choose the instrument.** Stocks: cash MIS. Index direction: weekly ATM/ITM options on Nifty and Sensex. **No futures for intraday.** | Budget 2026 STT: futures 0.05%, options 0.15% of premium. Cash intraday is unchanged at 0.025%. |
 | D4 | **A friction gate in code.** If estimated costs plus slippage exceed 0.2R, the trade is not taken. | Costs relative to stop size are the main way retail intraday and scalping lose. |
 | D5 | **Intraday daily loss: 2% hard limit (flatten and lock for the day).** Overnight gap risk is capped separately at 1%, so the worst possible day is 3%, the owner's stated maximum. R ≤ 0.5%, run at 0.25% in the first live stage. **Maximum drawdown 25%** (full stop), with size cut in steps well before that. | Five 3% days make a 15% drawdown. A new, unvalidated system will have such days. |
@@ -30,8 +37,8 @@
 | D7 | **The tick and 30-level depth recorder is built first and runs every day.** | No broker or affordable vendor sells historical depth. Every unrecorded day is lost. |
 | D8 | **Data source and execution venue are separate config choices.** Upstox supplies data through a 1-year read-only Analytics Token. Execution is `paper` now; at go-live, `upstox` or `zerodha` on a separate account the owner provides. | Paper needs no broker login or static IP, and the live broker can change without touching strategy code (§13). |
 | D9 | **Hexagonal (ports and adapters) architecture.** One engine serves replay, paper, shadow and live. Startup checks each strategy's requirements against the adapters' capabilities, and every adapter must pass a shared conformance test suite. | True plug-and-play, without silent degradation. |
-| D10 | **A no-LLM baseline book always runs alongside.** An LLM agent stays only if its measured improvement exceeds its cost. | LLM spend is a real hurdle on ₹10L of capital. |
-| D11 | **Scalping starts as a recording and research track.** The ML filter comes only after 50–100 recorded sessions. Jev (via OpenRouter) and other fast models compete with Claude Haiku on news triage; they stay out of numeric trade decisions. | Snapshot feeds, cost per trade, and no depth history. |
+| D10 | **The arena.** The LLM trader runs side by side with a rules-only control and free counterfactual books (veto value, management ablation, placebo); a chart twin is on probation. The primary, pre-registered metric is selection skill (IC). An approach stays only if its measured improvement beats its cost. | LLM spend is a real hurdle on ₹10L, and many books invite lucky winners. |
+| D11 | **Scalping starts as a recording and research track.** The ML filter comes only after 50–100 recorded sessions. Fast LLMs (Haiku-class) handle news triage and shadow decisions; Jev's typed model is not reachable through OpenRouter (Phase-0 test). | Snapshot feeds, cost per trade, and no depth history. |
 | D12 | **MCX starts with an operations layer** (contract calendar, rolls, tender/delivery, margin stress, band locks) before any MCX strategy. Mini and micro contracts only. | Compulsory delivery, pre-expiry margin and locked-limit days are the real MCX risks. |
 | D13 | **Fully independent.** The system tracks, reconciles and risk-manages only orders carrying its own tag. Everything else in the account is ignored. | Owner decision; keeps the system self-contained. |
 | D14 | **Laptop-first for paper.** One machine, zero-ops storage (SQLite plus Parquet), restart-safe and sleep-proof. Cloud hosting and static IP come at go-live. | Owner decision; no server cost during paper. |
@@ -88,38 +95,34 @@
 
 ---
 
-## 3. The core concept: a trading desk with two speeds
+## 3. The core concept: an AI trader with code for eyes, hands and seatbelt
 
 | Desk role | System component | Speed | Technology |
 |---|---|---|---|
-| Strategist | Pre-market Strategist agent | 08:30–09:12 | Strong LLM, with tools |
-| Analysts | Filings/News triage, then Materiality Analyst | Event-driven, 2–40 s | Fast LLM or Jev (triage); strong LLM (materiality) |
-| Plan writer | Stock Analyst agent, which outputs a `TradePlan` | 20–75 s | LLM |
-| Trader | Setup engine (state machines) plus fast ML filter | milliseconds | Code plus LightGBM |
-| Risk manager | Pre-trade risk, open-risk invariant, kill switch | microseconds | Code |
-| Execution desk | OMS, throttle, broker adapters | milliseconds | Code |
-| Coach | Post-market reviewer, weekly tuner (human-approved) | After hours | LLM, batch |
+| Strategist | Pre-market game plan: market thesis, IF-THEN scenarios per stock, avoid list, scenario propositions | 08:30–09:05 | Opus 5.5 |
+| Analysts | Filings/news triage, then materiality analysis | Event-driven, 2–40 s | Haiku 5.5, escalating to Sonnet |
+| **Trader** | **Decides at code-detected moments** (approach, trigger, scanner, news); manages open positions at events | 5–20 s per decision, made *before* triggers | Sonnet 5.5 (low effort) |
+| Eyes | Scenario watchers, rule library (tactics T1–T9 on the in-play list), scanners | milliseconds | Code |
+| Risk manager | Sizing, open-risk invariant, daily lock, kill switch; overrides any LLM claim | microseconds | Code |
+| Execution desk | Entry tactics, OMS, throttle, broker adapters | milliseconds | Code |
+| Coach | Post-market review; weekly lesson candidates tested offline, promoted only at season boundaries with owner approval | After hours | LLM, batch |
 
 ```
- COLD PLANE (seconds–minutes)                         HOT PLANE (milliseconds, deterministic)
- ┌───────────────────────────────┐                    ┌──────────────────────────────────────────┐
- │ News/filings ─► Triage ─► Materiality                │ Feed ─► Normalizer ─► Bars/Features      │
- │ Market sitrep ─► Strategist ─► Watchlist, day prior  │            │                             │
- │ Symbol sitrep ─► Plan writer ─► TradePlan (level IDs)│            ▼                             │
- │                    │                                 │  Setup state machines ─► ML filter       │
- │                    ▼ validate (schema, grounding,    │            │  (inside Permit only)       │
- │              risk policy)                            │            ▼                             │
- │              PERMIT (immutable, versioned, expiring)─┼──────► Risk (sizing, invariant, veto)    │
- │              can only NARROW: symbols, dirs,         │            ▼                             │
- │              setups, size_mult ≤ 1, blackouts        │  OMS ─► Throttle ─► Guardian ─► Adapter  │
- └───────────────────────────────┘                    └──────────────────────────────────────────┘
+ PLAN (08:30)        EYES (code, free)            DECIDE (LLM, seconds)          EXECUTE (code, ms)
+ Opus game plan ──► scenario watchers ──► moment ─► Sonnet decision ─► validate ─► size (shrink only)
+ IF-THEN per stock   rule library, scanners       (approach-time: ARM       (schema, grounding,    │
+ level IDs only      news triage                  with bounds; or TAKE/      checklist, guard)     ▼
+                                                  WAIT/PASS + scores)                    armed order fires
+                                                                                         on trigger ─► OMS
+ MANAGE: events only (≤ 3 LLM calls per trade); hard stops, partials, flatten times stay in code
+ ARENA: every moment re-simulated (COE) ─► rules control, veto, management, placebo books for free
 ```
 
 **Rules of the loop:**
-- **Plans use level IDs, not prices.** The context builder gives the LLM a table of computed levels (`L.ORH15`, `L.PDH`, `L.VWAP`, `L.RND1400`). A plan says, for example, "break above `L.ORH15` + 0.1 ATR", and code resolves that to a price. This removes most hallucinated numbers before validation even runs.
-- **Permits only restrict.** If the permit is missing or expired, no new entries are made. Exits are always deterministic and always allowed.
-- **News creates a blackout, not a signal.** When a filing lands on a watchlist symbol, deterministic code sets `FRESH_UNASSESSED`. That pauses new entries in the symbol until triage (and materiality analysis, if needed) clears it. The LLM's latency defines the blackout window.
-- **The hot path never waits on an LLM.**
+- **Plans and decisions use level IDs, not prices.** Code resolves `L.ORH15 + 0.1 ATR` to a price, so hallucinated numbers cannot reach an order.
+- **The LLM decides; it cannot loosen risk.** Size can only shrink from its request; checklist failures (location, friction, chasing) make a trade impossible; stops and flatten times are code.
+- **News creates a blackout, not a signal.** A filing on a watched symbol pauses new entries there until triage clears it.
+- **The hot path never waits on an LLM.** Decisions happen before triggers (APPROACH) or from plans approved within the last 30 minutes (ARMED); CONFIRM is used only for setups that resolve on a bar close.
 
 ---
 
@@ -268,7 +271,7 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 
 **Output:** 5 primary names (max 8) with depth subscription, plus 10–15 watchlist names.
 
-**Setups.** Phase 1 builds E1 and E2, then adds E3 once triage is validated in shadow. Every other setup is backlog and must earn its place through SPRT.
+**Setups (v0.3: now the rule library).** These setups are no longer the strategy. They are (a) entry tactics the LLM trader chooses from (tactic menu T1–T9 in [`ai-trader.md`](ai-trader.md) §5: E1 ≈ T2/T3, E2 ≈ T6, E3 ≈ T7 on catalyst names), (b) moment detectors that wake the LLM, and (c) the rules-only control book R in the arena.
 
 | Setup | Trigger | Stop | Exit |
 |---|---|---|---|
@@ -471,69 +474,54 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 
 ## 9. LLM layer
 
-**Roster.** The MVP uses only 1 and 2 (in shadow). The others are added when they beat the baseline.
+**The trading roles are specified in [`ai-trader.md`](ai-trader.md)** (§2 daily loop, §6 decision call, §7 management, §11 models and cost). Summary:
 
-| # | Agent | Model tier | When |
+| # | Role | Model | When |
 |---|---|---|---|
-| 1 | Pre-market Strategist (with tools) | strong (Opus-class) | 08:30–09:05, refreshed at 09:12 |
-| 2 | Filings/News Triage | fast: bake-off of Claude Haiku, Jev (OpenRouter) and another small model | event-driven, after a rule pre-filter |
-| 3 | Materiality Analyst (≤ 4 tool calls) | standard (Sonnet-class), escalating to strong | about 5–10% of items |
-| 4 | Plan Writer | standard | per candidate, on events, on plan expiry; ≤ 3 plans per symbol per day |
-| 5 | Intraday Re-assessor | fast, escalating to standard | when the delta gate fires, plus a 30-min backstop |
-| 6 | Trade Critic | strong, **from a different vendor** | large-risk plans, **every swing hold** (it replaces owner approval), and trades after 2 losses |
-| 7 | Post-market Reviewer | standard per trade (batch) | 15:45–18:00 |
-| 8 | Weekly Playbook Tuner | strong (batch) | Saturday. Proposes changes; the owner approves. |
+| 1 | Pre-market game plan + scenario propositions | Opus 5.5, medium effort, no tool loop | 08:30–09:05 |
+| 2 | Open read and midday re-plan | Sonnet 5.5, low effort | 09:24, 12:15 |
+| 3 | Filings/news triage | Haiku 5.5, reasoning off | Event-driven, after a rule pre-filter |
+| 4 | Materiality analysis | Haiku, escalating to Sonnet | ~10–13 items a day |
+| 5 | **Trade decisions** at moments (incl. "rank and take ≤ k of N" for bursts) | Sonnet 5.5, low effort | ≤ 40 a day |
+| 6 | Position management | Haiku, Sonnet on news or thesis risk | ≤ 3 calls per trade |
+| 7 | Trade Critic | Sonnet (blind-first protocol) | Every swing hold |
+| 8 | Shadow decider Hk / chart twin V | Haiku / Sonnet + chart | Same moments as 5 |
+| 9 | Post-market review, lesson candidates | OpenRouter Batch | After hours; lessons tested offline only |
 
-**Principles:**
-- **Monotone restriction:** the LLM can only narrow what the system does.
-- Plans use level IDs.
-- **Numeric grounding.** Every level ID must resolve. Stop < entry < T1 for longs (reverse for shorts). Entry within 1.5 ATR of LTP. Stop inside the setup's ATR band. **Net R:R to T1 ≥ 1.5 after costs.**
-- **Prose fact-check.** Every number in the thesis must match a value in the situation report within ±2%.
-- Structured outputs. One repair retry, then reject. An agent whose rejection rate exceeds 20% in a day is downgraded to advisory-only.
-- **Day type is deterministic.** The LLM supplies a prior or a downgrade.
-- **Re-assessment is triggered by a delta gate**, not a fixed 15-minute timer:
-  - price moved > 0.5 ATR;
-  - a new filing;
-  - sector or Nifty moved > 0.4%;
-  - plan validity has < 10 min left;
-  - price is near the stop or target.
-- **Critic protocol:** the critic first states its own stance without seeing the plan. If it disagrees with the plan, the plan is automatically downsized.
-- **Context discipline.** Code computes every number; the LLM never sees raw ticks. Every block carries `as_of`, and a plan built on a situation report more than 120 s old is rejected. Stable content goes first so prompt caching works. Example situation report: research report 05 §2.
-- **Prompt injection.** Scraped text arrives only as delimited, untrusted data. The triage model has no tools. Outputs must still pass deterministic gates.
-- **Record every call** (prompt hash, model, tokens, cost, latency, output) for replay and audit, and keep it at least 5 years.
-- **Budget guard with a degrade ladder.** At 80% of budget, strong-model calls drop to the standard model. At 100%, plan writing stops; only triage and exits continue.
+**Principles** (detail in `ai-trader.md`):
+- **The LLM decides trades but cannot loosen risk.** Size can only shrink from its request; code's checklist overrides any claim.
+- Level IDs only; numeric grounding (±2%); a rationalisation guard (changing the morning plan requires new information).
+- **Every decision scores the setup** (`p_win`, `exp_R`), even on PASS, so selection skill can be measured.
+- Structured outputs; one repair attempt, then PASS. Refusals and timeouts are PASS.
+- Day type is deterministic; the LLM supplies a prior only.
+- Prompts are P&L-blind: the LLM sees risk capacity, not rupees won or lost.
+- **Season 1 is frozen:** no prompt edits, no lessons or precedents in the prompt. Every change is a new trader identity with a new track record.
+- Prompt injection: scraped text is delimited untrusted data; triage has no tools; outputs still pass deterministic gates.
+- Record every call for replay and audit (≥ 5 years).
 
-**Cost estimates** (report 05; the red team notes these are slightly low):
+**Budget:** initial LLM budget ₹5–7k a month (owner decision, 9 Oct 2026), inside the ₹10k total. Planned at ₹118/$ until the first invoice shows whether GST applies: **≈ ₹4.1k core, ≈ ₹6.6k with the chart twin and 10% contingency.** Monthly hard cap ₹7,000 with a degrade ladder (`ai-trader.md` §11). It can grow once the approach proves itself.
 
-| Profile | ₹/month |
-|---|---|
-| Lean | ≈ 9.5k |
-| Lean+ (recommended once proven) | ≈ 11–13k |
-| Standard | ≈ 23k |
+**Leakage.** Current Claude models have a June 2026 training cutoff. Evidence comes only from forward paper trading and post-cutoff replays; pre-cutoff history tests extraction accuracy, never prediction.
 
-**Budget during paper: ₹10k a month in total.** On the laptop, infrastructure costs about ₹0, so up to about **₹8.5k a month** can go to LLMs. The rest covers incidentals, such as an optional ₹500/month Kite Connect data cross-check. **Start at about ₹5k a month** (pre-market brief plus the triage bake-off) and add agents only when they beat the no-LLM baseline.
-
-**Leakage.** Current Claude models have a June 2026 training cutoff.
-- Build the golden set from Jul–Oct 2026 filings: the Q1 FY27 results season, about 500 results plus other filings.
-- Pre-cutoff history is fine for testing extraction accuracy, but not for testing prediction.
-- The model registry stores each model's cutoff.
-
-**Provider port** with capability flags (structured output, tools, caching, server web search, batch, effort control) and per-route config.
-
-**Adapters:** **OpenRouter is the only provider in use** (owner decision, 9 Oct 2026): one key reaches Anthropic models, Jev and the small models. Native Anthropic/OpenAI adapters and local models remain possible behind the same port. Capabilities are set **per model**, because structured-output support varies between models on OpenRouter.
+**Provider port** with capability flags (structured output, tools, caching, batch, effort control), set **per model**. **OpenRouter is the only provider in use** (owner decision, 9 Oct 2026). Decision routes pin the model ID with `allow_fallbacks: false`.
 
 ```yaml
 llm:
-  budget_inr_month: 8500         # hard cap; batch and weekend jobs come from the same cap
-  budget_inr_day: 400            # soft daily cap (degrade ladder applies)
+  budget_inr_month: 7000         # hard cap
+  inr_per_usd_planning: 118      # until the first invoice
   routes:
-    triage:     {bakeoff: [anthropic/claude-haiku-5-5, openrouter/<jev-model-id>, openrouter/<small-model-id>],
-                 fallback: rules, timeout_s: 8}
-    strategist: {primary: anthropic/claude-opus-5-5, effort: high, max_tool_calls: 12}
-    planner:    {primary: anthropic/claude-sonnet-5-5, effort: medium, on_fail: no_plan}
-    critic:     {primary: openai/<model>, fallback: anthropic/claude-opus-5-5}
-    review:     {primary: anthropic/claude-sonnet-5-5, mode: batch}
+    plan:       {model: anthropic/claude-opus-5.5,   effort: medium, tools: none}
+    decide:     {model: anthropic/claude-sonnet-5.5, effort: low, allow_fallbacks: false, max_calls_day: 40}
+    replan:     {model: anthropic/claude-sonnet-5.5, effort: low}
+    triage:     {model: anthropic/claude-haiku-5.5,  reasoning: off, fallback: rules}
+    manage:     {model: anthropic/claude-haiku-5.5,  escalate: anthropic/claude-sonnet-5.5, max_calls_per_trade: 3}
+    shadow_hk:  {model: anthropic/claude-haiku-5.5,  reasoning: off}
+    chart_twin: {model: anthropic/claude-sonnet-5.5, effort: low, enabled_after: perception_gate}
+    critic:     {model: anthropic/claude-sonnet-5.5, effort: low}
+    review:     {model: anthropic/claude-sonnet-5.5, mode: batch}
 ```
+
+(Model IDs follow OpenRouter's naming; use the IDs verified in Phase 0.)
 
 ---
 
@@ -703,12 +691,7 @@ deploy/     laptop supervisor and sleep-prevention scripts; cloud docker-compose
 - **Latency** is lognormal: equity median about 120–180 ms and p95 about 450 ms; options at least 200–300 ms. During paper, the laptop's measured REST round trip to Upstox serves as a proxy (plus a margin). Proper calibration comes from live probes at stage L0.
 - **Broker behaviour is emulated:** the market-protection remainder; SL-limit orders that a gap can skip; the CAS rules (no entry, modify or cancel 15:15–15:20; auction until 15:35; v1 never trades the auction); broker square-off with its fee; fault injection (rejects, feed gaps, reconnects, token expiry).
 
-**Counterfactual books, free in paper:**
-- **A:** production.
-- **B:** ungated baseline, with no LLM and no day-type filter.
-- **C:** trades the LLM proposed and risk vetoed.
-
-Paired daily differences give the **uplift of the LLM and of each filter**.
+**The arena** ([`ai-trader.md`](ai-trader.md) §12). A Counterfactual Outcome Engine re-simulates every decision moment with the same conservative paper-exchange code, so actions nobody took also get after-cost outcomes. Books: **L** (LLM trader), **V** (chart twin, probation), **Hk** (Haiku shadow), and free derived books **R** (rules control), **S** (plan scripted), **H** (rules propose, LLM approves), **LD** (L's entries, default exits), **E** (consensus), **P1** (placebo), plus **IDX** (exploratory index options) and optional **OWN** (owner taps). Each paper book trades a full virtual ₹10L at a fixed R of 0.25%.
 
 **Stage L0, live probes (at go-live, not during paper):**
 - When the owner opens the live account, the first 2–3 weeks are 1-share probe orders, 20–40 a day, each with a paper twin.
@@ -724,12 +707,15 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 - about 333 trades for one-sided 80% power (422 two-sided);
 - with SPRT, about 205 trades on average if the edge is real, and about 144 if it is not.
 
+The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about 220 trades if the true edge is +0.25R, about 410 if it is +0.15R. Selection skill (IC) is answerable much sooner, at about 1,000 scored moments (≈ 8 weeks).
+
 **4–6 weeks of paper proves the plumbing. A go/no-go needs about 205 trades *per setup*.** At a realistic 2–4 trades a day per setup, that is 10–20 weeks. So the first setup can go live around week 14–20, and the others later. This is why phase 1 has only 2–3 setups.
 
 **Gate 1, paper → L0 probes** (all of these):
 - ≥ 40 trading days.
 - SPRT accepts on the conservative tier, or ≥ 200 trades with a bootstrap 90% CI lower bound above 0.
-- Observed expectancy ≥ +0.10R (SPRT tested against +0.15R), profit factor ≥ 1.25, max drawdown ≤ 6%.
+- Observed expectancy ≥ +0.10R (SPRT tested against +0.15R), profit factor ≥ 1.25, **max drawdown ≤ 20R** (about 5% at the paper R of 0.25%; a 6% gate would reject a genuinely good book about half the time at R = 0.5%).
+- **LLM books** must also meet the arena's success milestone S1 and pass a fresh confirmation window ([`ai-trader.md`](ai-trader.md) §12, §16).
 - Still positive after removing the best 5% of trades, and with +1 tick per side.
 - Zero risk breaches and zero unreconciled orders in the last 20 days.
 
@@ -814,11 +800,11 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | Phase | When | Build | Exit criterion |
 |---|---|---|---|
 | **0: Foundations and recorder** | weeks 0–2 | Repository skeleton; domain, ports, config, clock; instrument master and canonical mapping; session, holiday and cost tables; Upstox V3 feed on the Analytics Token; **recorder live**; data-quality report; laptop supervisor, sleep prevention and backups; API keys wired (Anthropic, OpenRouter) | 10 clean recorded sessions; 30 levels confirmed; feed-lag distribution known |
-| **1: MVP paper, unattended** | weeks 2–5 | Features; in-play selector; day-type labeller; conservative paper broker; OMS and risk; **E1 + E2**; Telegram alerts and kill switch; daily report; counterfactual books; **LLM pre-market brief + triage bake-off in shadow** | A full unattended paper day; replay parity 100% |
-| **2: Module expansion (paper)** | weeks 5–10 | E3 news-shock; LLM gating A/B test; **O1** index options; rules-only scalping on depth-30 names; **MCX operations layer plus C1–C3**; **swing module** (automatic, critic-gated); O2 expiry-day in paper | Each module running unattended with zero risk breaches |
+| **1: AI trader MVP and arena** | weeks 2–5 | Following [`ai-trader.md`](ai-trader.md) §17: Phase-0 LLM gates through OpenRouter; conservative paper exchange and the **Counterfactual Outcome Engine**; snapshot/sitrep builder with level IDs, shape features and information cards; moment engine (scenario watchers, rule library T1–T9, scanners, caps, bursts); **brain routes** (plan, decisions, management, triage, review) with validators and budget governor; arena ledger (L, Hk, R, S, H, LD, P1, IDX); Telegram (plan, trade cards, taps, journal, `/why`) | **Arena day 1:** a full unattended paper day end to end; replay parity 100%; COE parity ≤ 0.02R |
+| **2: Arena season 1 and module expansion (paper)** | weeks 5–13 | Chart renderer → perception gate → **V** (week 2 of the arena) and E; week-4 plan check; **week-8 kill-or-continue verdict** (`ai-trader.md` §16); rules-only scalping research on depth-30 names; **MCX operations layer plus C1–C3** (rule-based); **swing module** (automatic, critic-gated); O2 expiry-day in paper; season tooling (identity hashing, replay dojo, lesson candidates) | Pre-registered week-8 criteria; each module unattended with zero risk breaches |
 | **3: Go-live preparation** | when the owner is ready; ideally from about week 10 | Live execution adapter for the owner's chosen broker (Upstox or Zerodha); reconciliation; `deadman`; owner sets up the static-IP host; **stage L0 probes** (2–3 weeks) | Calibration criteria met (§12) |
-| **4: First live** | about weeks 15–20 | The first setup to pass Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3. Other setups follow as they pass. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. | Gates in §12 |
-| **5: Expansion** | months 4–6+ | Scalping ML filter (after 50–100 recorded sessions); index-option scalps; MCX live; more agents only where they beat the baseline | Per-module gates |
+| **4: First live** | about weeks 15–20 | A book that reaches the arena's S1 milestone and passes Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. "Rely on it instead of manual trading" (S2) needs ≥ 6 months of forward evidence. | Gates in §12 and `ai-trader.md` §16 |
+| **5: Expansion** | months 4–6+ | Meta-labeler on L's decisions (after 600 moments); lesson forks and precedent retrieval; index-options LLM book; Owner Twin; scalping ML filter (after 50–100 recorded sessions); MCX and swing LLM books only after equity is proven | Per-module gates |
 
 ---
 
@@ -839,12 +825,21 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | 11 | Jev | Available through OpenRouter; other small models are fine too. | OpenRouter adapter; triage bake-off (§7.3, §9). |
 | 12 | Manual trades | Ignore them; track only this system's orders. | Untagged orders and positions are ignored, never a halt (§10, §13). |
 
+**Owner decisions, 9 Oct 2026:**
+
+| # | Topic | Owner's answer | Effect on the design |
+|---|---|---|---|
+| 13 | Decision-maker | The LLM should be the actual discretionary trader, not a filter on rule strategies; "be creative and make me proud". | The AI trader design ([`ai-trader.md`](ai-trader.md)); rules become eyes, tactics and a control book (§3, §7.1). |
+| 14 | Compare approaches | Run multiple approaches and compare. | The arena with paid and free books (§12; `ai-trader.md` §12). |
+| 15 | LLM budget | ₹5–7k a month initially; more later if it works. | ≈ ₹4.1k core, ≈ ₹6.6k with the chart twin; hard cap ₹7k (§9). |
+| 16 | Chart images | Delegated: decide what works best. | Numeric-first; chart twin on probation with a pre-registered keep/drop rule (`ai-trader.md` §10). |
+| 17 | Goal | A system to rely on instead of manual discretionary trading. | Pre-registered success milestones S1 and S2, with the owner's own record as the bar for S2 (`ai-trader.md` §16). |
+
 **Default applied without an answer:** the paper cost model uses Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). That is conservative: a strategy that works at ₹30 also works at ₹20. It switches to the live account's tariff at go-live.
 
-**Remaining questions** (needed before Phase 0 starts; the defaults are workable):
-1. **Laptop:** operating system, RAM and free disk space? The recorder needs about 25–45 GB a month, or about 15–30 GB if only Parquet is kept. *Default: any OS, Python 3.12+, a data folder with ≥ 200 GB free or an external drive.*
-2. **API keys:** Anthropic, OpenRouter, OpenAI (for the critic), and a Telegram bot for alerts? *Default: Anthropic and OpenRouter now, OpenAI later, Telegram for alerts.*
-3. **Existing code:** do you have NSE/BSE scrapers or fundamentals clients (in another repository) worth reusing? *Default: write new adapters behind the ports.*
+**Earlier open questions** (laptop, API keys, existing code) were settled by the Phase-0 implementation (v0.2.1): a Windows laptop with data on `D:/trading-data`, OpenRouter as the only LLM provider, and Telegram alerts.
+
+**Optional, recommended:** export 12 months of your own broker tradebook. It sets the honest bar for "instead of my manual trading" (`ai-trader.md` §15–§16).
 
 ---
 
@@ -864,6 +859,12 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | 10 | [red-team-intraday-options](../research/10-red-team-intraday-options.md) | Corrections and build order for options |
 | 11 | [mcx-commodities-module](../research/11-mcx-commodities-module.md) | MCX contracts, sessions, playbooks, costs |
 | 12 | [red-team-mcx-commodities](../research/12-red-team-mcx-commodities.md) | Corrections and build order for MCX |
+| 13 | [llm-trader-decision-process](../research/13-llm-trader-decision-process.md) | The LLM trader's day, moments, decision contract, tactics, management |
+| 14 | [llm-cost-latency-openrouter](../research/14-llm-cost-latency-openrouter.md) | Verified prices, token budgets, cost profiles, latency, governance |
+| 15 | [chart-vision-vs-numeric](../research/15-chart-vision-vs-numeric.md) | Evidence on LLMs reading charts, chart spec, experiment design |
+| 16 | [arena-evaluation](../research/16-arena-evaluation.md) | Counterfactual engine, books, statistics, meta-labeler, allocation |
+| 17 | [edge-memory-trust](../research/17-edge-memory-trust.md) | Memory and lessons, information edges, regime, trust UX, new ideas |
+| 18 | [red-team-llm-trader](../research/18-red-team-llm-trader.md) | Rulings, failure modes, minimal v1, kill and success criteria |
 
 *Facts are as of 2026-10-08. Several are tagged medium or low confidence in the research and are marked "verify" here. Recheck them during Phase 0, because rules changed 7 times in the past 8 months.*
 
@@ -877,3 +878,4 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | v0.1.1 | 2026-10-08 | Corrections from an adversarial fact-and-math check (risk invariant sign, overnight reserve, minimum stops, gates, roadmap) |
 | v0.2 | 2026-10-08 | Owner decisions: independent system, laptop paper hosting, 25% maximum drawdown, automatic swing, OpenRouter/Jev bake-off, budget, live probes moved to go-live |
 | v0.2.1 | 2026-10-09 | Implementation decisions: Python confirmed; asyncio instead of uvloop on the Windows laptop; no Upstox SDK; all LLMs through OpenRouter; venue chosen by `execution.venue` with a live-trading guard |
+| v0.3 | 2026-10-09 | The LLM becomes the trader (`ai-trader.md`): plan-the-trade loop, decision moments, arena with counterfactual books, selection IC as primary metric, chart twin on probation, ₹5–7k LLM budget, pre-registered kill/success criteria; drawdown gate stated in R; roadmap re-planned |

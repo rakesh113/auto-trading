@@ -3,7 +3,7 @@ This repository contains customised bots and agents for intra day trading in sto
 
 ## Design
 
-The system design (v0.2) is in [`docs/design/trading-system-design.md`](docs/design/trading-system-design.md). The research behind it is in [`docs/research/`](docs/research/).
+The system design (v0.3) is in [`docs/design/trading-system-design.md`](docs/design/trading-system-design.md). How the AI trader decides and how competing approaches are compared is in [`docs/design/ai-trader.md`](docs/design/ai-trader.md). The research behind both is in [`docs/research/`](docs/research/).
 
 ## Status
 
