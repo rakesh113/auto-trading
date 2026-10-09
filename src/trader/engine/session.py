@@ -70,6 +70,8 @@ class Engine:
     index_iid: InstrumentId
     vix_iid: InstrumentId | None = None
     notify: Callable[[str], None] | None = None
+    news: Any = None  # FilingStore: non-routine filings impose a blackout on the symbol
+    blackout_min: int = 15
     states: dict[InstrumentId, SymbolState] = field(default_factory=dict)
     primary: list[Scored] = field(default_factory=list)
     watch: list[Scored] = field(default_factory=list)
@@ -79,6 +81,8 @@ class Engine:
     _flattened: set[str] = field(default_factory=set)
     _last_minute: int = -999
     _first_minute: int | None = None
+    _news_ns: int = 0
+    _blackout: dict[InstrumentId, int] = field(default_factory=dict)
     ended: bool = False
     feed_ok: bool = True
 
@@ -190,6 +194,7 @@ class Engine:
         if due:
             self._done_daytype.update(due)
             self._classify(minute)
+        self._check_news(now_ns)
         await self._flatten_times(minute)
         await self._kills()
         if minute >= END_AT and not self.ended:
@@ -207,6 +212,8 @@ class Engine:
                     continue
                 status = b.oms.refresh_status(self.states)
                 gate = "HIGH_VOL_EVENT day" if b.gated and self.day_type.label == "HIGH_VOL_EVENT" else ""
+                if self._blackout.get(sig.iid, 0) > self.clock.now_ns():
+                    gate = "news blackout (fresh filing, not yet assessed)"
                 d = self.risk.evaluate(sig, st, status, now_ns=self.clock.now_ns(), minute=bar.start_min + 1,
                                        shortable=sig.iid in self.shortable, day=self.day, gate_reason=gate)
                 self.journal.write(self.clock.now_ns(), b.name, "signal", {
@@ -222,6 +229,23 @@ class Engine:
                 if b.name == "A":
                     self._say(f"[A] {sig.setup} {sig.iid.symbol} {sig.side.value} {d.qty} @ ~{sig.entry / 100:.2f} "
                               f"stop {sig.stop / 100:.2f} (risk ₹{d.risk_inr:,.0f}, friction {d.friction_r:.2f}R)")
+
+    def _check_news(self, now_ns: int) -> None:
+        """Fresh non-routine filing on a symbol → no new entries in it for `blackout_min` (design §3).
+        Uses our first-seen time, so replay applies exactly the blackouts the live run had."""
+        if self.news is None:
+            return
+        upto = now_ns - 5_000_000_000  # 5 s lag: rows are inserted just after first-seen; live == replay
+        since = self._news_ns or upto - int(self.blackout_min * 60e9)
+        if upto <= since:
+            return
+        for iid_s, seen_ns, key in self.news.material_candidates(since, upto):
+            iid = InstrumentId.parse(iid_s)
+            until = seen_ns + int(self.blackout_min * 60e9)
+            if until > self._blackout.get(iid, 0):
+                self._blackout[iid] = until
+                self.journal.write(now_ns, "*", "news_blackout", {"iid": iid_s, "filing": key, "until_ns": until})
+        self._news_ns = upto
 
     def _select(self, minute: int) -> None:
         min_rvol = 1.5 if minute >= at(9, 30) else None

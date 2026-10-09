@@ -7,6 +7,7 @@
   dq            data-quality report for a recorded day
   eod           end-of-day: silver Parquet + quality verdict + raw-file retention + backup
   paper         paper trading every trading day (books A gated, B baseline), from the recorder's feed
+  intel         filings (NSE/BSE), triage bake-off and pre-market brief, all in shadow
   replay        re-run a recorded day through the same engine; prints the journal digest
   supervise     start and babysit the long-running services (recorder + paper)
 """
@@ -156,6 +157,13 @@ async def _paper(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _intel(args: argparse.Namespace) -> int:
+    from trader.intel.service import run_intel_forever
+
+    await run_intel_forever(_cfg(args))
+    return 0
+
+
 async def _replay(args: argparse.Namespace) -> int:
     from trader.engine.runner import replay_day
 
@@ -176,7 +184,7 @@ def _supervise(args: argparse.Namespace) -> int:
 
     _cfg(args)
     prof = ["--profile", args.profile] if args.profile else []
-    supervise({"recorder": [*prof, "record"], "paper": [*prof, "paper"]})
+    supervise({"recorder": [*prof, "record"], "paper": [*prof, "paper"], "intel": [*prof, "intel"]})
     return 0
 
 
@@ -195,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("eod")
     s.add_argument("--date", default=None)
     sub.add_parser("paper")
+    sub.add_parser("intel")
     s = sub.add_parser("replay")
     s.add_argument("--date", required=True)
     sub.add_parser("supervise")
@@ -202,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "supervise":
         return _supervise(args)
     fn = {"check": _check, "instruments": _instruments, "record": _record, "record-now": _record_now,
-          "dq": _dq, "eod": _eod, "paper": _paper, "replay": _replay}[args.cmd]
+          "dq": _dq, "eod": _eod, "paper": _paper, "replay": _replay, "intel": _intel}[args.cmd]
     return asyncio.run(fn(args))
 
 

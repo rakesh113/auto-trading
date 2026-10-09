@@ -33,6 +33,7 @@ from trader.core.universe import fno_stock_underlyings, index_constituents
 from trader.domain.instrument import InstrumentId
 from trader.domain.types import IST, Exchange, InstrumentKind, to_paise
 from trader.engine.session import Book, Engine, drain_all
+from trader.intel.filings import FilingStore
 from trader.market.history import ContextStore, fetch_contexts
 from trader.oms.journal import Journal
 from trader.oms.manager import OrderManager
@@ -136,8 +137,10 @@ def build_engine(cfg: AppConfig, day: date, clock: Any, master: UpstoxInstrument
                            tag_prefix=cfg.system.tag_prefix, status=status, stop_attach_s=risk_cfg.stop_attach_s)
         strats = [strategies.create(s) for s in SETUPS]
         books.append(Book(name, name, gated, trader, oms, strats))
+    news_db = Path(cfg.system.data_dir) / "intel" / "filings.sqlite"
+    news = FilingStore(news_db) if news_db.exists() else None
     return Engine(clock=clock, day=day, master=master, contexts=contexts, sectors=sectors, shortable=shortable,
-                  risk=risk, journal=journal, books=books, index_iid=INDEX, vix_iid=VIX, notify=notify)
+                  risk=risk, journal=journal, books=books, index_iid=INDEX, vix_iid=VIX, notify=notify, news=news)
 
 
 # ---- replay -----------------------------------------------------------------------------------
@@ -208,6 +211,7 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
                 await engine.on_time(now)
 
     hb = asyncio.create_task(heartbeat())
+    bot_task = _start_command_bot(cfg, engine, clock, journal)
     try:
         async for ev in feed.events():
             ts = getattr(ev, "ts_recv_ns", 0)
@@ -218,6 +222,8 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
                 break
     finally:
         hb.cancel()
+        if bot_task is not None:
+            bot_task.cancel()
         await feed.stop()
         await drain_all(engine)
     summary = engine.summary()
@@ -232,6 +238,50 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
     await send_daily_report(cfg, day, summary, notifier)
     await asyncio.gather(*pending, return_exceptions=True)
     return summary
+
+
+def _start_command_bot(cfg: AppConfig, engine: Engine, clock: Any, journal: Journal) -> asyncio.Task[None] | None:
+    """Phone control (owner choice: same bot, PIN, tighten-only). Only the paper process polls."""
+    import os
+
+    from trader.ops.commands import CommandBot
+
+    if cfg.notifier.provider != "telegram":
+        return None
+    try:
+        token, chat = secret("TELEGRAM_BOT_TOKEN"), secret("TELEGRAM_CHAT_ID")
+    except Exception:  # noqa: BLE001
+        return None
+    pin = os.environ.get("TELEGRAM_COMMAND_PIN", "").strip() or None
+
+    async def status() -> str:
+        s = engine.summary()
+        lines = [f"Day type {s['day_type']}; in play: {', '.join(i.split(':')[2] for i in s['in_play'])}"]
+        for name, b in s["books"].items():
+            lines.append(f"{name}: ₹{b['pnl']:+,.0f}, {b['trades']} closed, {b['open']} open"
+                         + (" LOCKED" if b["locked"] else ""))
+        for b in engine.books:
+            for t in b.oms.open_trades():
+                lines.append(f"  [{b.name}] {t.sig.iid.symbol} {t.side.value} {t.open_qty} @ {t.avg_entry / 100:.2f} "
+                             f"stop {t.stop / 100:.2f}")
+        return "\n".join(lines)
+
+    async def pause() -> str:
+        for b in engine.books:
+            b.status.paused = True
+        return "Paused: no new entries for the rest of the session. Exits and stops continue."
+
+    async def flatten() -> str:
+        for b in engine.books:
+            b.status.locked = True
+            await b.oms.flatten_all(engine.states, "owner flatten (Telegram)")
+        return "Flattening all positions and locking the day."
+
+    def audit(cmd: str, accepted: bool) -> None:
+        journal.write(clock.now_ns(), "*", "human_override", {"cmd": cmd, "accepted": accepted, "via": "telegram"})
+
+    bot = CommandBot(token=token, chat_id=chat, pin=pin, status=status, pause=pause, flatten=flatten, audit=audit)
+    return asyncio.create_task(bot.run(), name="telegram-commands")
 
 
 async def run_paper_forever(cfg: AppConfig) -> None:
