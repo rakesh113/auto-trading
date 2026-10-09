@@ -869,7 +869,28 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 
 ---
 
-## 18. Change log
+## 18. Implementation notes (Phase 0–1, 9 Oct 2026)
+
+Decisions taken while building, and where the code deliberately differs from the text above.
+
+| Area | Decision | Why |
+|---|---|---|
+| Feed ownership | The recorder owns the 4 Upstox sockets and re-broadcasts raw frames on 127.0.0.1; the trading process decodes them (`LocalFrameFeed`). | Upstox allows 5 sockets per account. It also makes live input identical to replay input. |
+| Event clock | The engine runs on the receive time of the frame it is processing; a heartbeat advances it with wall time only when the feed is quiet. | Replay parity. Shown on real frames: 153k events gave identical journal digests through the live socket path and through replay. |
+| Exits | To exit, the order manager cancels the resting stop, waits for the cancel confirmation, then sends the exit for what is still open (and a new stop for any remainder). | No double exit or oversell on any broker. The unprotected gap is one round trip. |
+| After the first target | The stop moves to breakeven. | The text says "partial at 1R, then trail"; breakeven makes the remainder's open risk zero for the invariant. |
+| E1 stop | Retest extreme, or the OR midpoint when the retest is closer than max(0.25% of price, 0.15 ATR); skip if wider than 0.5 ATR. | A retest that holds in the same bar gives a stop a few ticks away, which the floor would always veto. |
+| In-play score | Measured components only; the catalyst weight is redistributed until a triage model is promoted. Universe for Phase 1: F&O stocks (shortable, liquid). | Triage runs in shadow in Phase 1. |
+| News blackout | A non-routine filing on a symbol blocks new entries for 15 minutes, if it was fresh (≤ 10 min old) when first seen. Read with a 5 s lag. | Triage is in shadow, so the blackout is time-based; the lag keeps live and replay identical. |
+| Reference data | F&O ban list (long-only at 0.5x) and start-of-day price bands (no entries within 1%) are cached per day. | Hard rules in §6/§7.1. Dynamic F&O bands can flex intraday; the snapshot is the conservative value. |
+| Mid-session restart | Both books lock for the rest of the day; realized P&L is carried from the journal and abandoned paper positions are reported. | Exact state rebuild would need a long fast-forward replay; locking is honest and conservative. |
+| Late start | Overdue schedules wait for 2 minutes of data; day open/high/low come from the feed's daily candle. The opening range is unknown on a late start, so the day type stays UNKNOWN. | Avoids acting on empty state. |
+| Models | All models through OpenRouter. Jev 1.13 is a decisions model on `/api/alpha/decisions` (0.5–0.9 s, ~$0.00002 per filing); Haiku 5.5 needs reasoning disabled for short JSON; Opus 5.5 refuses requests without reasoning. | Verified live. |
+| Not yet built | ASM/GSM/ESM and T2T exclusions, corporate-action ex-date exclusions, band refresh intraday, catch-up replay after a restart, the day-type allow/block matrix (only HIGH_VOL_EVENT blocks), triage scoring against price moves. | Planned for Phase 1 hardening / Phase 2. |
+
+---
+
+## 19. Change log
 
 | Version | Date | Change |
 |---|---|---|
@@ -877,3 +898,4 @@ Paired daily differences give the **uplift of the LLM and of each filter**.
 | v0.1.1 | 2026-10-08 | Corrections from an adversarial fact-and-math check (risk invariant sign, overnight reserve, minimum stops, gates, roadmap) |
 | v0.2 | 2026-10-08 | Owner decisions: independent system, laptop paper hosting, 25% maximum drawdown, automatic swing, OpenRouter/Jev bake-off, budget, live probes moved to go-live |
 | v0.2.1 | 2026-10-09 | Implementation decisions: Python confirmed; asyncio instead of uvloop on the Windows laptop; no Upstox SDK; all LLMs through OpenRouter; venue chosen by `execution.venue` with a live-trading guard |
+| v0.3 | 2026-10-09 | Phase 0 complete, Phase 1 built and running in paper: implementation notes in §18 |

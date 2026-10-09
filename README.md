@@ -7,7 +7,18 @@ The system design (v0.2) is in [`docs/design/trading-system-design.md`](docs/des
 
 ## Status
 
-Phase 0 (foundations and recorder) is in progress. Paper trading only; nothing places real orders.
+Phase 0 (foundations and recorder) is complete. Phase 1 (unattended paper trading) is running. Paper only: nothing places real orders.
+
+Every trading day the laptop runs three services:
+
+| Service | What it does |
+|---|---|
+| `record` | Records the Upstox feed (4 sockets), re-broadcasts raw frames on 127.0.0.1, converts the day to Parquet after the close |
+| `paper` | The trading engine: in-play selection, day type, setups E1/E2, risk, order manager, paper fills; books **A** (day-type gated) and **B** (baseline) |
+| `intel` | NSE/BSE filings, the triage bake-off (Jev 1.13 vs Claude Haiku 5.5, in shadow) and the pre-market brief (Opus 5.5, in shadow) |
+
+Telegram receives: start messages, the 08:35 brief, the in-play list at 09:30, every paper entry and exit (book A), kill events, and the end-of-day report (summary plus an HTML file).
+Phone commands (PIN in `.env` as `TELEGRAM_COMMAND_PIN`): `/status`, `/pause <PIN>`, `/flatten <PIN>`. They can only tighten; there is no resume from the phone.
 
 ## Setup (Windows laptop)
 
@@ -31,7 +42,10 @@ Override machine-specific settings in `config/local.yaml` (git-ignored).
 | `trader record-now --minutes N` | Record from now for N minutes (smoke test) |
 | `trader dq [--date YYYY-MM-DD]` | Data-quality report for a recorded day |
 | `trader eod [--date YYYY-MM-DD]` | Silver Parquet + quality verdict + raw-file retention + backup (runs automatically after each session) |
-| `trader supervise` | Run and restart the long-running services |
+| `trader paper` | Paper trading every trading day (what the supervisor runs) |
+| `trader intel` | Filings, triage bake-off and pre-market brief (what the supervisor runs) |
+| `trader replay --date YYYY-MM-DD` | Re-run a recorded day through the same engine; prints the journal digest |
+| `trader supervise` | Run and restart the long-running services (record, paper, intel) |
 
 ### Running it unattended
 
@@ -81,11 +95,17 @@ src/trader/
   ports/       interfaces: Trader, MarketDataFeed, InstrumentMaster, Clock, RawRecorder, Notifier
   core/        config, registry, composition root (build_app), costs, calendar, universe, throttle
   adapters/    paper/ (simulated fills)  upstox/ (REST, websocket feed, protobuf, live trader)
-  recorder/    bronze raw-frame recorder, daily service, data-quality report
-  intel/       LLM providers (OpenRouter)
+  recorder/    bronze raw-frame recorder, local broadcast, daily service, silver Parquet, data quality
+  market/      symbol state and bars, history/context, in-play selection, day type, ban list and bands
+  strategies/  setup state machines (E1 opening-range retest, E2 VWAP reclaim)
+  risk/        sizing, friction gate, hard limits, kills (config/risk.yaml)
+  oms/         order and position manager, SQLite journal
+  engine/      session engine with books A/B, live and replay runners
+  reports/     end-of-day paper report
+  intel/       OpenRouter chat, Jev decisions, filings, triage bake-off, pre-market brief
   ops/         logging, notifications, supervisor, keep-awake
   apps/cli.py  the `trader` command
-config/        base.yaml, profiles/, universe.yaml, costs.yaml
-tests/         unit, property (order FSM), contract (trader conformance)
+config/        base.yaml, profiles/, universe.yaml, costs.yaml, risk.yaml
+tests/         unit, property (order FSM), contract (trader conformance), engine determinism
 deploy/        Windows Task Scheduler setup
 ```
