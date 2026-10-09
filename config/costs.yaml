@@ -1,0 +1,51 @@
+# Statutory charges and brokerage, as data with effective dates (design §4, §5).
+# Rates are percentages of turnover (premium turnover for options) unless named *_paise.
+# A schedule applies from its `effective_from` until the next one. Items marked
+# "verify" are medium confidence in docs/research/02; reconcile against contract notes.
+
+schedules:
+  - effective_from: 2026-04-01
+    stt:                      # charged on the side named
+      equity_intraday: {sell: 0.025}
+      equity_delivery: {buy: 0.1, sell: 0.1}
+      futures:         {sell: 0.05}          # Budget 2026
+      options:         {sell: 0.15}          # of premium, Budget 2026
+      commodity_futures: {sell: 0.01}        # CTT, non-agri
+      commodity_options: {sell: 0.05}
+    exchange_txn:             # NSE from 1 Mar 2026 (circular FA73061); verify
+      NSE: {equity: 0.00307, futures: 0.00183, options: 0.03553}
+      BSE: {equity: 0.00375, futures: 0.0, options: 0.0325}      # verify
+      MCX: {futures: 0.0021, options: 0.0418}                    # verify
+    sebi_fee: 0.0001          # ₹10 per crore
+    stamp_duty:               # buy side only
+      equity_intraday: 0.003
+      equity_delivery: 0.015
+      futures: 0.002
+      options: 0.003
+      commodity_futures: 0.002
+      commodity_options: 0.003
+    gst: 18.0                 # on brokerage + exchange txn + SEBI fee
+
+brokerage_profiles:
+  # Default paper profile: conservative Upstox Plus rates (design §5, §16).
+  upstox_plus:
+    equity_intraday: {flat_paise: 3000, pct: 0.1}   # ₹30 or 0.1%, whichever is lower
+    equity_delivery: {flat_paise: 3000, pct: 0.1}
+    futures:         {flat_paise: 3000}
+    options:         {flat_paise: 3000}
+    commodity_futures: {flat_paise: 3000}
+    commodity_options: {flat_paise: 3000}
+  upstox_basic:
+    equity_intraday: {flat_paise: 2000, pct: 0.1}
+    equity_delivery: {flat_paise: 2000, pct: 0.1}
+    futures:         {flat_paise: 2000}
+    options:         {flat_paise: 2000}
+    commodity_futures: {flat_paise: 2000}
+    commodity_options: {flat_paise: 2000}
+  zerodha:
+    equity_intraday: {flat_paise: 2000, pct: 0.03}
+    equity_delivery: {flat_paise: 0}
+    futures:         {flat_paise: 2000, pct: 0.03}
+    options:         {flat_paise: 2000}
+    commodity_futures: {flat_paise: 2000, pct: 0.03}
+    commodity_options: {flat_paise: 2000}

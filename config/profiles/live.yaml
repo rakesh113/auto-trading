@@ -1,0 +1,9 @@
+# Live trading. Real orders. Only builds when TRADER_LIVE_ARMED=yes is set for the
+# session and the venue's daily access token is present (see trader/core/app.py).
+execution:
+  venue: upstox
+  settings:
+    paper:
+      cost_profile: upstox_plus   # shadow books use the live account's tariff
+notifier:
+  provider: telegram
