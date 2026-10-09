@@ -32,6 +32,7 @@ from trader.domain.types import IST, Exchange, FeedMode
 from trader.ops.power import keep_awake
 from trader.ports.clock import now_ist
 from trader.ports.infra import Severity
+from trader.recorder.broadcast import FrameBroadcaster
 from trader.recorder.bronze import BronzeRecorder
 from trader.recorder.dq import verdict
 from trader.recorder.silver import backup, build_silver, disk_free_gb, prune_bronze
@@ -81,8 +82,12 @@ async def _sleep_until(dt: datetime) -> None:
 async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[str, Any]:
     """Record one session. Returns a summary."""
     data_dir = cfg.system.data_dir
-    recorder = BronzeRecorder(data_dir, rotate_minutes=cfg.recorder.rotate_minutes,
-                              zstd_level=cfg.recorder.zstd_level, flush_every_s=cfg.recorder.flush_every_s)
+    bronze = BronzeRecorder(data_dir, rotate_minutes=cfg.recorder.rotate_minutes,
+                            zstd_level=cfg.recorder.zstd_level, flush_every_s=cfg.recorder.flush_every_s)
+    recorder: BronzeRecorder | FrameBroadcaster = bronze
+    if cfg.recorder.broadcast_port:
+        recorder = FrameBroadcaster(bronze, port=cfg.recorder.broadcast_port)
+        await recorder.start()
     app = build_app(cfg, recorder=recorder, with_trader=False)
     feed = app.feed
     assert feed is not None
@@ -149,7 +154,7 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
                     "ts": now_ist(_CLOCK).isoformat(timespec="seconds"), "connected": h.connected,
                     "frames": h.frames, "events": h.messages, "reconnects": h.reconnects,
                     "decode_errors": h.decode_errors, "dropped_feed": h.dropped,
-                    "recorder_written": recorder.written, "recorder_dropped": recorder.dropped,
+                    "recorder_written": bronze.written, "recorder_dropped": bronze.dropped,
                     "subscribed": h.subscribed, "lag_ms": h.lag_summary(),
                     "recent_states": tracker.states[-10:],
                 }
@@ -187,8 +192,8 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
         log.exception("recorder.eod_failed")
         eod = f"end-of-day processing FAILED: {e!r}"
     await notify(f"Recorder day done {today}: frames={h.frames:,} reconnects={h.reconnects} "
-                 f"dropped={recorder.dropped}. {eod}")
-    return {"frames": feed.health().frames, "written": recorder.written, "dropped": recorder.dropped,
+                 f"dropped={bronze.dropped}. {eod}")
+    return {"frames": feed.health().frames, "written": bronze.written, "dropped": bronze.dropped,
             "unmapped": plan.missing}
 
 

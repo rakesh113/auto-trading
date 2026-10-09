@@ -1,0 +1,41 @@
+# Hard risk rules (design §6). Code-enforced; no model can change these. Change only outside
+# market hours; loosening requires a restart and the owner's sign-off.
+equity_inr: 1000000            # paper capital; the paper book compounds its own P&L on top
+r_pct: 0.5                     # risk per trade, % of equity (owner: full 0.5% on paper)
+dll_pct: 2.0                   # intraday daily loss limit: flatten and lock
+day_ceiling_pct: 3.0           # catastrophic ceiling incl. overnight (kill + manual reset)
+invariant_frac: 0.9            # realized + MTM − open risk − new risk ≥ −0.9 × DLL_eff
+soft_warning_frac: 0.6         # loss ≥ 60% of DLL_eff → size 0.5x
+open_risk_pct: 1.5             # Σ open risk cap
+max_positions: 4               # intraday positions
+max_same_direction: 3
+max_per_sector: 2
+symbol_notional_x: 1.2         # per-symbol notional cap, × equity
+gross_x_normal: 3.0
+gross_x_hard: 4.0
+free_margin_frac: 0.2          # keep ≥ 20% margin free
+intraday_margin_pct: 20.0
+equity_module_frac: 0.6        # equity module may lose at most 60% of DLL_eff in a day
+friction_max_r: 0.2            # costs + spread + slippage ≤ 0.2R
+slippage_bps: 1.0              # per side, used in the friction estimate
+min_net_rr: 1.5                # net reward:risk after costs
+stop_floor_pct: 0.25           # stop ≥ max(0.25% × price, 0.15 × ATR, 3 × spread + 2 ticks)
+stop_floor_atr: 0.15
+last_entry: "14:40"
+flatten_cas: "15:00"           # closing-auction stocks
+flatten_other: "15:12"
+streak_losses_cooloff: 3       # consecutive losses → 30 min cool-off, then 2 trades at 0.5x
+cooloff_min: 30
+max_losers_per_day: 4
+profit_protect_start_inr: 10000
+profit_protect_floor: 0.5
+weekly_stop_pct: 4.0
+monthly_stop_pct: 8.0
+drawdown_ladder:               # drawdown from high-water mark → size multiplier
+  - [5, 0.75]
+  - [10, 0.5]
+  - [15, 0.35]
+  - [20, 0.25]
+drawdown_stop_pct: 25.0
+stop_attach_s: 5               # broker-side stop must exist within this many seconds of a fill
+stale_feed_s: 5                # no new entries when the symbol's data is older than this

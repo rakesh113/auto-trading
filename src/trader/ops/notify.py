@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import structlog
 
@@ -36,3 +38,13 @@ class TelegramNotifier(Notifier):
             r.raise_for_status()
         except httpx.HTTPError as e:  # alerts must never take the system down
             log.error("telegram.failed", error=repr(e), text=text)
+
+    async def send_document(self, path: Path, caption: str = "") -> None:
+        url = self._url.replace("/sendMessage", "/sendDocument")
+        try:
+            with open(path, "rb") as fh:
+                r = await self._client.post(url, data={"chat_id": self._chat, "caption": caption[:1000]},
+                                            files={"document": (path.name, fh, "text/html")}, timeout=60)
+            r.raise_for_status()
+        except (httpx.HTTPError, OSError) as e:
+            log.error("telegram.document_failed", error=repr(e), path=str(path))

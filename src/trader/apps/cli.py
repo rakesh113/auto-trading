@@ -6,7 +6,9 @@
   record-now    record from now for N minutes (smoke test; works outside hours too)
   dq            data-quality report for a recorded day
   eod           end-of-day: silver Parquet + quality verdict + raw-file retention + backup
-  supervise     start and babysit the long-running services
+  paper         paper trading every trading day (books A gated, B baseline), from the recorder's feed
+  replay        re-run a recorded day through the same engine; prints the journal digest
+  supervise     start and babysit the long-running services (recorder + paper)
 """
 
 from __future__ import annotations
@@ -147,12 +149,34 @@ async def _eod(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _paper(args: argparse.Namespace) -> int:
+    from trader.engine.runner import run_paper_forever
+
+    await run_paper_forever(_cfg(args))
+    return 0
+
+
+async def _replay(args: argparse.Namespace) -> int:
+    from trader.engine.runner import replay_day
+
+    cfg = _cfg(args)
+    day = date.fromisoformat(args.date)
+    out = cfg.system.data_dir / "journal" / f"replay-{day.isoformat()}.sqlite"
+    if out.exists():
+        out.unlink()
+    digest, summary = await replay_day(cfg, day, journal_path=out)
+    print(json.dumps(summary, indent=1, default=str))
+    print(f"journal digest: {digest}")
+    print(f"journal: {out}")
+    return 0
+
+
 def _supervise(args: argparse.Namespace) -> int:
     from trader.ops.supervisor import supervise
 
     _cfg(args)
     prof = ["--profile", args.profile] if args.profile else []
-    supervise({"recorder": [*prof, "record"]})
+    supervise({"recorder": [*prof, "record"], "paper": [*prof, "paper"]})
     return 0
 
 
@@ -170,12 +194,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--date", default=None)
     s = sub.add_parser("eod")
     s.add_argument("--date", default=None)
+    sub.add_parser("paper")
+    s = sub.add_parser("replay")
+    s.add_argument("--date", required=True)
     sub.add_parser("supervise")
     args = p.parse_args(argv)
     if args.cmd == "supervise":
         return _supervise(args)
     fn = {"check": _check, "instruments": _instruments, "record": _record, "record-now": _record_now,
-          "dq": _dq, "eod": _eod}[args.cmd]
+          "dq": _dq, "eod": _eod, "paper": _paper, "replay": _replay}[args.cmd]
     return asyncio.run(fn(args))
 
 

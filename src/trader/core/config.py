@@ -105,6 +105,7 @@ class RecorderCfg(_Model):
     bronze_retention_days: int = 30  # raw frames; silver Parquet is kept indefinitely
     backup_dir: Path | None = None  # e.g. an external drive or a synced folder; None disables
     min_free_gb: float = 50.0  # alert when the data drive drops below this
+    broadcast_port: int = 47011  # local fan-out of raw frames to the trading process (0 disables)
 
 
 class NotifierCfg(_Model):
