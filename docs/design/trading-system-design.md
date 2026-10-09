@@ -479,7 +479,7 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 | # | Role | Model | When |
 |---|---|---|---|
 | 1 | Pre-market game plan + scenario propositions | Opus 5.5, medium effort, no tool loop | 08:30–09:05 |
-| 2 | Open read and midday re-plan | Sonnet 5.5, low effort | 09:24, 12:15 |
+| 2 | Open read and midday re-plan | Sonnet 5.5, low effort | 09:31, 12:15 |
 | 3 | Filings/news triage | Haiku 5.5, reasoning off | Event-driven, after a rule pre-filter |
 | 4 | Materiality analysis | Haiku, escalating to Sonnet | ~10–13 items a day |
 | 5 | **Trade decisions** at moments (incl. "rank and take ≤ k of N" for bursts) | Sonnet 5.5, low effort | ≤ 40 a day |
@@ -687,11 +687,11 @@ deploy/     laptop supervisor and sleep-prevention scripts; cloud docker-compose
 
 **Fill tiers:** optimistic, base and **conservative**. Decide only on conservative, and reject any strategy that is profitable only on the optimistic tier.
 - **Marketable orders** walk the depth-30 book seen at arrival, using 70% of displayed size, with a liquidity ledger so the same displayed size can't be consumed twice.
-- **Passive limits** fill only on a trade-through or when the queue ahead is used up.
+- **Passive limits:** on the conservative tier (the one decisions are made on) they fill only when price trades **at least one tick through** the limit; the base tier also allows a fill once the estimated queue ahead is used up.
 - **Latency** is lognormal: equity median about 120–180 ms and p95 about 450 ms; options at least 200–300 ms. During paper, the laptop's measured REST round trip to Upstox serves as a proxy (plus a margin). Proper calibration comes from live probes at stage L0.
 - **Broker behaviour is emulated:** the market-protection remainder; SL-limit orders that a gap can skip; the CAS rules (no entry, modify or cancel 15:15–15:20; auction until 15:35; v1 never trades the auction); broker square-off with its fee; fault injection (rejects, feed gaps, reconnects, token expiry).
 
-**The arena** ([`ai-trader.md`](ai-trader.md) §12). A Counterfactual Outcome Engine re-simulates every decision moment with the same conservative paper-exchange code, so actions nobody took also get after-cost outcomes. Books: **L** (LLM trader), **V** (chart twin, probation), **Hk** (Haiku shadow), and free derived books **R** (rules control), **S** (plan scripted), **H** (rules propose, LLM approves), **LD** (L's entries, default exits), **E** (consensus), **P1** (placebo), plus **IDX** (exploratory index options) and optional **OWN** (owner taps). Each paper book trades a full virtual ₹10L at a fixed R of 0.25%.
+**The arena** ([`ai-trader.md`](ai-trader.md) §12). A Counterfactual Outcome Engine re-simulates every decision moment with the same conservative paper-exchange code, so actions nobody took also get after-cost outcomes. Books: **L** (LLM trader), **V** (chart twin, probation), **Hk** (Haiku shadow), and free derived books **R** (rules control), **S** (plan scripted), **H** (rules propose, LLM approves), **LD** (L's entries, default exits), **E** (consensus), **P1** (placebo), plus **P2** (universe placebo) and optional **OWN** (owner taps). In season 1 index options, MCX and swing run rule-based as data collection. Each paper book trades a full virtual ₹10L at a fixed R of 0.25%.
 
 **Stage L0, live probes (at go-live, not during paper):**
 - When the owner opens the live account, the first 2–3 weeks are 1-share probe orders, 20–40 a day, each with a paper twin.
@@ -711,7 +711,7 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 
 **4–6 weeks of paper proves the plumbing. A go/no-go needs about 205 trades *per setup*.** At a realistic 2–4 trades a day per setup, that is 10–20 weeks. So the first setup can go live around week 14–20, and the others later. This is why phase 1 has only 2–3 setups.
 
-**Gate 1, paper → L0 probes** (all of these):
+**Gate 1, paper evidence (statistical)** (all of these):
 - ≥ 40 trading days.
 - SPRT accepts on the conservative tier, or ≥ 200 trades with a bootstrap 90% CI lower bound above 0.
 - Observed expectancy ≥ +0.10R (SPRT tested against +0.15R), profit factor ≥ 1.25, **max drawdown ≤ 20R** (about 5% at the paper R of 0.25%; a 6% gate would reject a genuinely good book about half the time at R = 0.5%).
@@ -719,7 +719,7 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 - Still positive after removing the best 5% of trades, and with +1 tick per side.
 - Zero risk breaches and zero unreconciled orders in the last 20 days.
 
-**Gate 2, L0 → L1 (R = 0.25%):** the three calibration criteria above are met, **and** the setup's paper record, re-scored with the calibrated fill model, still passes Gate 1. Without probe data, paper fills are an unverified model.
+**Gate 2, → L1 (R = 0.25%):** Gate 1 is passed, the L0 calibration criteria above are met, **and** the setup's paper record, re-scored with the calibrated fill model, still passes Gate 1. Without probe data, paper fills are an unverified model. (L0 probes only calibrate fills, so they may start whenever the live account exists.)
 
 **L1 → L2 → L3:** each step needs ≥ 20 days and ≥ 80 trades, live not significantly worse than its shadow twin, and an average slippage gap ≤ 0.05R.
 
@@ -800,8 +800,8 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | Phase | When | Build | Exit criterion |
 |---|---|---|---|
 | **0: Foundations and recorder** | weeks 0–2 | Repository skeleton; domain, ports, config, clock; instrument master and canonical mapping; session, holiday and cost tables; Upstox V3 feed on the Analytics Token; **recorder live**; data-quality report; laptop supervisor, sleep prevention and backups; API keys wired (Anthropic, OpenRouter) | 10 clean recorded sessions; 30 levels confirmed; feed-lag distribution known |
-| **1: AI trader MVP and arena** | weeks 2–5 | Following [`ai-trader.md`](ai-trader.md) §17: Phase-0 LLM gates through OpenRouter; conservative paper exchange and the **Counterfactual Outcome Engine**; snapshot/sitrep builder with level IDs, shape features and information cards; moment engine (scenario watchers, rule library T1–T9, scanners, caps, bursts); **brain routes** (plan, decisions, management, triage, review) with validators and budget governor; arena ledger (L, Hk, R, S, H, LD, P1, IDX); Telegram (plan, trade cards, taps, journal, `/why`) | **Arena day 1:** a full unattended paper day end to end; replay parity 100%; COE parity ≤ 0.02R |
-| **2: Arena season 1 and module expansion (paper)** | weeks 5–13 | Chart renderer → perception gate → **V** (week 2 of the arena) and E; week-4 plan check; **week-8 kill-or-continue verdict** (`ai-trader.md` §16); rules-only scalping research on depth-30 names; **MCX operations layer plus C1–C3** (rule-based); **swing module** (automatic, critic-gated); O2 expiry-day in paper; season tooling (identity hashing, replay dojo, lesson candidates) | Pre-registered week-8 criteria; each module unattended with zero risk breaches |
+| **1: AI trader MVP and arena** | weeks 2–5 | Following [`ai-trader.md`](ai-trader.md) §17: Phase-0 LLM gates through OpenRouter; conservative paper exchange and the **Counterfactual Outcome Engine**; snapshot/sitrep builder with level IDs, shape features and information cards; moment engine (scenario watchers, rule library T1–T9, scanners, caps, bursts); **brain routes** (plan, decisions, management, triage, review) with validators and budget governor; arena ledger (L, Hk, R, S, H, LD, P1, P2); Telegram (plan, trade cards, taps, journal, `/why`) | **Arena day 1:** a full unattended paper day end to end; replay parity 100%; COE parity ≤ 0.02R |
+| **2: Arena season 1 and module expansion (paper)** | weeks 5–13 | Chart renderer → perception gate → **V** (early-stop decision in arena weeks 3–4) and E; week-4 plan check; **week-8 selection screen: kill or continue**, then trade-based checks in weeks 10–14 (`ai-trader.md` §16); rules-only scalping research on depth-30 names; **MCX operations layer plus C1–C3** (rule-based); **swing module** (automatic, critic-gated); O2 expiry-day in paper; season tooling (identity hashing, replay dojo, lesson candidates) | Pre-registered week-8 criteria; each module unattended with zero risk breaches |
 | **3: Go-live preparation** | when the owner is ready; ideally from about week 10 | Live execution adapter for the owner's chosen broker (Upstox or Zerodha); reconciliation; `deadman`; owner sets up the static-IP host; **stage L0 probes** (2–3 weeks) | Calibration criteria met (§12) |
 | **4: First live** | about weeks 15–20 | A book that reaches the arena's S1 milestone and passes Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. "Rely on it instead of manual trading" (S2) needs ≥ 6 months of forward evidence. | Gates in §12 and `ai-trader.md` §16 |
 | **5: Expansion** | months 4–6+ | Meta-labeler on L's decisions (after 600 moments); lesson forks and precedent retrieval; index-options LLM book; Owner Twin; scalping ML filter (after 50–100 recorded sessions); MCX and swing LLM books only after equity is proven | Per-module gates |
@@ -819,7 +819,7 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | 5 | Options | Run independently; ignore other agents. | Cross-agent exposure checks removed (§7.2). |
 | 6 | MCX | Small overnight positions and unattended evening trading are fine; Zerodha for live MCX if needed. | Unchanged; the live MCX broker is chosen at go-live (§13). |
 | 7 | Swing | No approval needed for good setups. | Automatic, gated by hard rules plus the Trade Critic (§7.5). |
-| 8 | Budget | ≤ ₹10k a month for LLM, servers and data during paper; no paid feeds. | Laptop hosting makes infrastructure about ₹0; LLM budget up to about ₹8.5k a month (§9). |
+| 8 | Budget | ≤ ₹10k a month for LLM, servers and data during paper; no paid feeds. | Laptop hosting makes infrastructure about ₹0. (The LLM share is now set by row 15: ₹5–7k, hard cap ₹7k.) |
 | 9 | Live login | Approval can wait until about 09:00. | Paper needs no login; live entries can start as late as 09:20 without missing setups (§8, §13). |
 | 10 | Hosting | Paper on the owner's laptop; owner handles the static IP at go-live. | Laptop-friendly deployment (§10, §14). |
 | 11 | Jev | Available through OpenRouter; other small models are fine too. | OpenRouter adapter; triage bake-off (§7.3, §9). |
