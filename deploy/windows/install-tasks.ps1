@@ -1,5 +1,5 @@
 # Registers the supervisor to start at logon and restart if it dies (design §10, laptop operation).
-# Normally called by deploy-runtime.ps1 with -RunDir pointing at the runtime copy. Standalone:
+# Runs the services from this repository folder (or -RunDir). Usage:
 #   powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1 [-RunDir <folder>]
 # Remove with:  Unregister-ScheduledTask -TaskName "AutoTrading-Supervisor" -Confirm:$false
 

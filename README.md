@@ -49,13 +49,18 @@ Override machine-specific settings in `config/local.yaml` (git-ignored).
 
 ### Running it unattended
 
-The supervisor runs from a separate **runtime copy** of `main` (`..\auto-trading-run`), so work on development branches never touches what is recording or trading. After merging to `main`, deploy outside market hours:
+The scheduled task `AutoTrading-Supervisor` runs the services from this folder at every logon and restarts them if they crash:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy\windows\deploy-runtime.ps1 -Restart
+powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1   # once
+Start-ScheduledTask -TaskName AutoTrading-Supervisor
 ```
 
-This updates the runtime copy, registers the logon task, and restarts the services. Telegram receives start, feed-down, recovery and end-of-day messages (with the data-quality verdict).
+**Edit code only outside market hours (after 15:50, before 08:30 IST).** A service that restarts picks up whatever code is in this folder at that moment. To apply changes, restart outside market hours:
+
+```powershell
+Stop-ScheduledTask AutoTrading-Supervisor; Start-ScheduledTask AutoTrading-Supervisor
+```
 
 ### Data on disk
 
