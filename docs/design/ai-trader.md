@@ -15,7 +15,9 @@
 - **The season-1 game plan runs on Sonnet**, not Opus (§3, §11).
 - **Jev 1.13 leads filing triage**, with Haiku as fallback. It is reachable through OpenRouter's decisions endpoint (main design §18 on the owner's implementation branch).
 - **The LLM budget split is replaced** by portfolio doc §11 (§11).
-- **The intraday money gate** becomes q10 > 0 after realistic friction and LLM cost, instead of +0.15R (§16).
+- **The intraday money gate** becomes q10 > 0 after realistic friction and LLM cost, instead of +0.15R; the SPRT against +0.15R is retired as a kill or go-live test (§12.3, §16).
+- **The separate materiality route is cut:** Jev triage scores materiality, and deep reads happen in ES.
+- **Prompts are frozen before the season-0 replay**, which then runs on them (§13).
 
 ---
 
@@ -28,7 +30,7 @@
 | A3 | **The question that decides everything is selection skill.** At every moment the LLM must score the setup (`p_win`, `exp_R`), even when it passes or the book is full. The primary metric is the correlation between those scores and what actually happened (the information coefficient, IC). | It is the only thing an 8-week paper run can screen honestly. Profitability takes longer. |
 | A4 | **Two paid LLM books; everything else is computed for free.** L is the intraday LLM trader on catalyst moments. ES-L is the event-swing LLM book (portfolio doc §4). A counterfactual engine re-simulates every moment, which yields the rules control, the veto book, the management ablation and placebos at zero LLM cost. The chart twin V waits for season 2. | Fits ₹5–7k a month, and keeps the comparisons paired and statistically strong. |
 | A5 | **Charts are not the default:** numbers are the source of truth and no price can ever be read off an image. **The chart twin (V) is deferred to season 2**, and starts only if L passes the week-8 screen. When it runs, it needs a perception test, an early stop and a pre-registered keep/drop rule (§10). Ties go to numbers. No charts in the pre-market plan. The owner always gets the chart. | Evidence: vision models read broad shape but misread values, cannot name patterns, and lean long/trend. Worth testing, not assuming. |
-| A6 | **Models:** Sonnet 5.5 at low effort for the season-1 plan, intraday decisions and ES deep reads; Haiku 5.5 for routine management, materiality escalation and a shadow decider; Jev 1.13 for filing triage, with Haiku as fallback. Opus 5.5 only if K4 shows the plan adds value. All through OpenRouter. | Depth where latency doesn't matter; speed and cost where it does. Haiku shows whether Sonnet is worth 20× the price. |
+| A6 | **Models:** Sonnet 5.5 at low effort for the season-1 plan, intraday decisions and ES deep reads; Haiku 5.5 for routine management and a shadow decider; Jev 1.13 for filing triage, with Haiku as fallback. Opus 5.5 only if K4 shows the plan adds value. All through OpenRouter. | Depth where latency doesn't matter; speed and cost where it does. Haiku shows whether Sonnet is worth 20× the price. |
 | A7 | **Discipline lives in code, never in the prompt.** Code computes the checklist (chasing, room, friction, index alignment). The LLM cannot raise size, widen stops, or exceed 3 equity entries a day. The main design's risk framework (§6 there) applies unchanged. Prompts are P&L-blind: the LLM sees risk capacity, not rupees won or lost. | LLMs absorb framing and drift toward revenge or paralysis. Code doesn't. |
 | A8 | **Season 1 is frozen** and runs through the week-8 verdict: no learning loop in the prompt, no prompt edits. Every case (including passes) is logged; lessons are tested offline and enter only as a new "trader identity" at a season boundary. | Every change resets the track record. A drifting prompt can never be evaluated. |
 | A9 | **Pre-registered kill and success criteria.** Week 8 screens selection skill (kill or continue); weeks 14–20 add the trade-based checks (later than v1.1, because catalyst-only routing means fewer trades); "rely on it instead of manual trading" needs at least 6 months of evidence. | Honest timelines protect the owner's capital and trust. |
@@ -69,7 +71,7 @@
 | 07:45–08:30 | Global cues, filings since 15:30, in-play score, dossiers per candidate (numbers, cards, levels) | Code | Dossiers |
 | **08:30–09:05** | **Pre-market game plan** (no tool loop; code pre-assembles everything) | **Sonnet 5.5** in season 1 | `MarketThesis`, up to 8 `GamePlan`s (usually the 3–5 catalyst names), avoid list, tradeability prior, 20–40 scenario propositions |
 | 09:08–09:12 | Compare pre-open indicative price and futures imbalance with plan assumptions | Code | Scenarios marked valid or invalid |
-| **09:12** | **Pre-open call:** confirm or kill the plan; may pre-approve opening-drive pullbacks (T7) and opening-range acceptance (T3) for the top 2 catalyst names, so the first entries don't wait for the open read | Sonnet 5.5 | ARMED-eligible scenarios |
+| **09:12** | **Pre-open call:** confirm or kill the plan; may pre-approve opening-drive pullbacks (T7) for the top 2 catalyst names, so the first entries (from 09:25) don't wait for the open read. Opening-range acceptance (T3) can't fire before about 09:40 and is approved at the open read. | Sonnet 5.5 | ARMED-eligible scenarios |
 | 09:15–09:30 | Observe; build the 15-minute opening range, drive, RVOL, breadth; provisional day-type label at 09:30. No entries except the pre-approved T7 (from 09:25). | Code | — |
 | **09:31** | **Open read** (after OR15 completes): confirm, kill or re-rank scenarios; approve scenarios for arming | Sonnet 5.5 | Updated plans |
 | 09:31–10:45 | **Primary window:** decision moments, entries, management. Until 09:40 the posture comes from the plan's `tradeability_prior`. If no name passes the opportunity gate by 10:30, the equity book stands down. | Sonnet / Haiku | `TradeDecision`, `PositionUpdate` |
@@ -80,7 +82,7 @@
 | European open (12:30 IST until 25 Oct, then 13:30) | Day-type classifier re-run | Code | Afternoon posture |
 | 13:45–14:40 | Afternoon window: only leaders already in play, on a confirmed trend label | Sonnet / Haiku | — |
 | 14:40 / 15:00 / 15:12 | No new intraday entries / closing-auction names flat / others flat | Code | — |
-| 15:00–15:30 | **ES entries and exits:** code checks the day-1 confirmation (portfolio doc §4) and close-based stops; F&O names in the closing auction, others sliced | Code | ES fills |
+| 15:00–15:30 | **ES entries and exits:** non-F&O names sliced from 15:00; for F&O names, code checks the day-1 confirmation and close-based stops at about 15:15–15:20 and enters closing-auction orders from 15:20 (portfolio doc §4) | Code | ES fills |
 | 15:45–17:00 | Review of trades **and passes** with counterfactual outcomes; journal; scenario propositions scored | Batch (Sonnet) + code | Daily debrief, leaderboard |
 
 **Special days:**
@@ -172,7 +174,7 @@ Code creates moments. The LLM never polls the market.
 |---|---|---|---|
 | **Scenario: approach** | Price within 0.3 ATR of a scenario trigger, or 1 of its 2 conditions true | Pre-clear: arm or not, within what bounds | Before the trigger (typically 2–10 min) |
 | **Scenario: trigger** (CONFIRM scenarios only) | The `if` becomes true | Take, pass or adjust within bounds | min(45 s, price leaves the zone) |
-| **Rule library** | A rule tactic fires on the deterministic in-play top 15 (§6, tactic menu) | Take or pass. This also feeds the rules-only and veto books. | 45 s |
+| **Rule library** | A rule tactic fires on the deterministic in-play top 15 (§5, tactic menu) | Take or pass. This also feeds the rules-only and veto books. | 45 s |
 | **Scanner** | Unplanned level test with RVOL ≥ 1.5; failed breakout; first VWAP test after a trend leg; relative-strength divergence ≥ 0.4% in 15 min; 1-min volume > 5× normal; futures OI ±3% in 15 min | New scenario, take or ignore | 60 s |
 | **News** | Filing or news with triage materiality ≥ 60 (scale 0–100) | New in-play? Thesis change? Exit? | 60–120 s (results: wait 3–5 min) |
 | **Index regime** | Day-type flips, Nifty breaks OR/PDH/PDL, VIX +8% | Book-level: tighten, disarm, flip bias | 60 s |
@@ -201,7 +203,7 @@ Code creates moments. The LLM never polls the market.
 
 | Mode | When | How |
 |---|---|---|
-| **ARMED** | A scenario approved in the plan, open read or re-plan **within the last 90 minutes** that still passes code's validity checks | When price comes within 0.3 ATR of the trigger, code arms the order (15-minute TTL) without a new LLM call, then enters within 200 ms of the trigger inside the pre-approved bounds (max entry, max stop distance, size). A post-fill review follows (§7): it may exit or tighten, never widen. |
+| **ARMED** | A scenario approved in the plan, the 09:12 pre-open call, the open read or the re-plan **within the last 90 minutes** that still passes code's validity checks | When price comes within 0.3 ATR of the trigger, code arms the order (15-minute TTL) without a new LLM call, then enters within 200 ms of the trigger inside the pre-approved bounds (max entry, max stop distance, size). A post-fill review follows (§7): it may exit or tighten, never widen. |
 | **APPROACH** (default) | Price nearing a trigger of a scenario not pre-approved, or a scanner/rule moment | One call *before* the trigger. If approved, the order is armed with a **10-minute TTL**. LLM latency is hidden. |
 | **CONFIRM** | Setups that only resolve on a bar close (reversals, fades, VWAP reclaims), unplanned moments, news | Code holds the trigger for one call. A late answer counts as PASS. **Chase guard:** if price has moved more than 0.25× the stop distance past the trigger, convert to a 3-minute retest limit or skip. |
 
@@ -266,7 +268,7 @@ PLAN S1 base-top acceptance → T2, stop ORMID, size M, T: W52H 50% / trail VWAP
   bounds: entry ≤ ORH15 + 0.15 ATR; stop ≤ 0.45 ATR | plan p_trigger .45, p_t1 .55
   BASE RATE (walk-forward, rule library, conservative fills): n=184 win 47% exp +0.27R (shrunk toward 0, k0=10: +0.26R)
 CHECKLIST (code) opportunity gate ✓ (catalyst 74) | location ✓ stop 0.42 ATR (100 bps) | index NEUTRAL | priced_in 0.55 (<0.70 ✓) | chasing no
-  room to RND420 1.55R, to W52H 1.8R | friction 0.15R (realistic) | blended target 1.90R vs gate 1.88R ✓ | window primary ✓
+  room to RND420 1.6R, to W52H 1.85R | friction 0.15R (realistic) | blended target 1.93R vs gate 1.88R ✓ | window primary ✓
 BOOK open 1 position (risk 0.25R) | open risk 0.25R of 6R cap | entries 2/3 | size cap L | flags: none
 ASK: pre-clear S1 (ARM with bounds) or PASS. Score the setup in every case.
 ```
@@ -297,7 +299,7 @@ TradeDecision/1 {
   "instrument": "CASH_MIS",                                          // season 1; option kinds reserved for later
   "tactic": {"id": "T2", "params": {"max_entry": {"ref": "L.ORH15", "off_atr": 0.15}}},
   "wait_for": [ /* condition DSL for WAIT_FOR / ARM */ ],
-  "stop": {"ref": "L.ORMID", "off_atr": -0.05},
+  "stop": {"ref": "L.ORMID", "off_atr": 0},
   "targets": [{"ref": "L.W52H", "pct": 50}, {"trail": "VWAP_5M_CLOSE", "pct": 50}],  // at most 2 exit legs
   "time_stop_min": 45,
   "size_request": "S|M|L",                                           // 0.5 / 0.75 / 1.0 × current R
@@ -315,7 +317,8 @@ TradeDecision/1 {
 **Scoring rules for the arena:**
 - **WAIT_FOR** re-arms the watcher once, creating a new moment; at the original moment it counts as a PASS. It uses one call.
 - **Book-level moments** (index regime shifts, checkpoints, "exit?" news on a held position) have no setup and are excluded from the IC.
-- **Blended target:** fixed legs count at their level; trail legs count at the lower of the next opposing level beyond the fixed targets and 2R. In the example: 50% × 1.8R + 50% × 2R = 1.9R, against a gate of 1.5 + 2.5 × 0.15 = 1.88R.
+- **Blended target:** fixed legs count at their level; trail legs count at the lower of the next opposing level beyond the fixed targets and 2R. In the example: 50% × 1.85R + 50% × 2R ≈ 1.93R, against a gate of 1.5 + 2.5 × 0.15 = 1.88R.
+- **What the gate implies with 2 legs:** a fixed leg of share p at T1 must satisfy p × T1 + (1 − p) × 2 ≥ 1.5 + 2.5 × friction_R. At the default 50/50 split, T1 ≥ 1 + 5 × friction_R (about 1.75R at 0.15R, 2R at 0.2R), so a 50% partial at 1R can never clear it.
 
 ### 6.3 What code enforces on the answer
 
@@ -333,7 +336,7 @@ TradeDecision/1 {
    - **S** when the decision is UNPLANNED or CONTRADICTS the plan;
    - any discipline flag's cap.
 
-   Tiers are S/M/L = 0.5/0.75/1.0 × the current R. The day-type multiplier and the drawdown ladder (main design §6) then **multiply** the result. Size can only go down from the request, never up.
+   Tiers are S/M/L = 0.5/0.75/1.0 × the current R. The day-type multiplier and the 5% / 10% drawdown multipliers (main design §6; intraday base R held at ₹2k at R = ₹2.5k) then **multiply** the result. Size can only go down from the request, never up.
 6. **Scarcity:** at most **3 equity entries a day**. A TAKE or ARM needs grade ≥ B and `exp_R` ≥ +0.15R; otherwise it becomes PASS. (A win-rate band is not used: a 45% win rate at 2:1 beats 60% at 1:1.)
 7. **Refusals** (`stop_reason: refusal`) and timeouts are treated as PASS.
 
@@ -412,11 +415,11 @@ TradeDecision/1 {
 - a binary event in session, until 30 minutes after it;
 - a feed or data-quality fault.
 
-(The drawdown ladder does not cause SIT-OUT; it scales size as in main design §6.)
+(The drawdown ladder does not cause SIT-OUT. At 5% and 10% it scales size; at 15% and 20% it switches off the sleeve with the lowest LCB (main design §6). If that is sleeve A, L stops trading.)
 
 **Tradeability score (0–100) at 09:40.** It is scored every day against the rules control book's P&L, which is the ground truth for "was today good for systematic setups". This directly measures whether "don't trade today" judgement adds value. Below 35: at most one A+ catalyst trade.
 
-**Mode cards.** One brain, four modes: CATALYST, MOMENTUM, FADE and INDEX. Code picks a ≤ 300-token mode card per moment from the moment type and regime, and every decision carries a mode tag. Per-mode results come for free. A mode becomes its own book only once its tagged results show an edge.
+**Mode cards.** One brain, four modes: CATALYST, MOMENTUM, FADE and INDEX. Code picks a ≤ 300-token mode card per moment from the moment type and regime, and every decision carries a mode tag. Per-mode results come for free. A mode becomes its own book only once its tagged results show an edge. **In season 1, L receives only the CATALYST card (§4).** The MOMENTUM and FADE cards are used by Hk's shadow calls, so per-mode results for those modes come from Hk and R; INDEX waits for the options LLM book. In the regime table, "Max LLM entries" counts L's CATALYST entries only.
 
 **Weekly personality audit.** Each item is compared with the control book:
 - long/short ratio vs breadth;
@@ -557,7 +560,7 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 
 | Call | p50 | p95 | Timeout | On timeout |
 |---|---|---|---|---|
-| Triage (Haiku) | ~2 s | 4 s | 6 s | 1 retry; the symbol stays blacked out |
+| Triage (Jev 1.13; Haiku fallback) | ~0.5–0.9 s (Haiku ~2 s) | measure in Phase 0 | 3 s (Haiku 6 s) | Fall back to Haiku once; else the symbol stays blacked out |
 | Approach decision (Sonnet) | 6–10 s | 15–20 s | 25 s | Nothing armed; on the trigger, the CONFIRM path or skip |
 | Confirm decision (Sonnet, low effort) | 6–10 s | 15–20 s | min(45 s, zone exit) | PASS |
 | Management | 2–7 s | 12 s | 15 s | Broker stop stays; plan default applies |
@@ -566,7 +569,7 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 
 **Pinning.** Decision and plan routes pin the model ID and set `allow_fallbacks: false`. A different model never makes entry decisions, because that would contaminate the comparison. Management may fall back from Sonnet to Haiku to code.
 
-**If the plan call fails:** one retry. If there is still no plan by 09:20, the day is flagged NO_PLAN: L trades only scanner and rule moments, S has no trades, and the day is reported separately in the arena.
+**If the plan call fails:** one retry. If there is still no plan by the 09:12 pre-open call, that call is skipped and the day is flagged NO_PLAN: nothing is pre-approved, L is called only on catalyst moments (§4) arising from scanners, rules and news, S has no trades, and the day is reported separately in the arena.
 
 **Budget governance:**
 - **Caps:** monthly hard cap ₹7,000; daily soft cap ≈ remaining budget ÷ remaining trading days; per-route sub-budgets; separate OpenRouter keys (live, research/replay, batch) with credit limits; keep a balance of ≥ $15 (low balances add latency).
@@ -586,14 +589,14 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 
 - **What it does:** every moment is re-simulated by the **same conservative paper-exchange code**, replayed on the recorded ticks and depth. The simulated entry time includes the deciding call's measured latency.
 - **What it produces:** an after-cost outcome for *every* action at that moment, including actions nobody took:
-  - `y_default`: the moment's own tactic with the default bracket (half out at 1R, the rest trailed on the 5-minute swing, 45-minute time stop);
+  - `y_default`: the moment's own tactic with the bracket chosen before the freeze (B0 unless B1 or B2 wins; §7, portfolio doc §3), fixed for the season. B0 is 50% at T1 (≥ 1 + 5 × friction_R, §6.2) and 50% trailed on the 5-minute swing, with a 45-minute time stop. `y_default` scores the moment, so it is not itself subject to the blended-target gate;
   - one outcome per tactic on the menu.
 - **Why it matters:** passes get scored, derived books cost nothing, and comparisons are paired on the same moments.
 - **Latency used:** for decisions, the call's measured latency; for passes and unasked moments, the route's median latency.
-- **Shadow books (V, Hk):** they see the same prompt as L (including L's book line, so the prompts stay identical). Their actions are then applied to their own books through the COE, each with its own risk state; a TAKE that their book has no room for is skipped.
+- **Shadow books (V, Hk):** they see the prompt L would see for that moment (same sitrep builder, including L's book line), whether or not L itself is called. Hk runs on every moment; V (season 2) runs only on L's moments. Their actions are then applied to their own books through the COE, each with its own risk state; a TAKE that their book has no room for is skipped.
 - **Checks:**
   - **Conformance:** COE re-simulation of actual paper trades must match the paper fills within a median of 0.02R.
-  - **Sensitivity:** pass values are also reported under a second default bracket.
+  - **Sensitivity:** pass values are also reported under the runner-up bracket.
 
 ### 12.2 The books
 
@@ -601,7 +604,7 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 |---|---|---|---|
 | **L** | The LLM trader: plan, decisions, management | paid | The product |
 | **V** (season 2) | L's decision calls plus a chart; default exits (probation, §10) | paid | Value of charts (V − LD) |
-| **Hk** | Haiku 5.5 deciding the same moments in shadow | ~₹60 | Is Sonnet worth 20×? |
+| **Hk** | Haiku 5.5 deciding **every** moment in shadow: L's catalyst moments and all the moments L is not called on | part of the ~₹500 Haiku-shadow line (portfolio doc §11) | Is Sonnet worth 20× on catalyst moments (K6)? The general all-moment IC |
 | **R** | Rules control: every rule-library trigger on the **deterministic** in-play top 15, default bracket, limited by its own risk engine (same config as L) | free | The raw value of the setups (the baseline) |
 | **S** | The plan's scenarios traded mechanically when they trigger | free | Value of the game plan (S − R) |
 | **H** | R's triggers that L was asked about and where L's `setup_verdict` said take; compared with R on the same asked triggers | free | **Value of the LLM's vetoes** (H − R) |
@@ -638,12 +641,12 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 
 **Methods:**
 - Day-clustered paired bootstrap with CUPED (index/sector return as covariate) for relative questions.
-- SPRT on net R per trade for absolute edge (H0 = 0, H1 = +0.15R), with σ estimated from the data and inflated for within-day clustering.
+- **Absolute edge (v1.2):** the posterior of net R per trade after realistic friction and LLM cost (prior N(0, 0.1R), σ estimated from the data and inflated for within-day clustering; portfolio doc §8). Its q10 is the money gate. The v1.1 SPRT against +0.15R is reported as a progress meter only, never as a kill or go-live test: at the planned +0.03–0.08R it would drift toward rejecting a real edge.
 - Anytime-valid confidence sequences on the leaderboard, so it can be watched daily without inflating false positives.
 - At graduation: Deflated Sharpe ratio using the full trial registry, and Hansen's SPA test against R.
 
 **Why discipline matters here.** With 8 zero-edge books at 240 trades each, there is a **36–38% chance one passes a typical gate by luck** (report 16 simulation). Defences:
-- the five pre-registered questions;
+- the pre-registered questions of §12.3 (L's and ES's primary questions, two secondary questions, two decision rules);
 - the placebo book;
 - a fresh confirmation window before any live money;
 - live risk allocated on the lower confidence bound.
@@ -652,12 +655,12 @@ The v1.1 table below is kept as the per-call cost reference. In season 1 the Opu
 
 | Question | Needed | Time |
 |---|---|---|
-| CATALYST selection IC (SE ≈ 0.05–0.06 day-clustered at 400–600 moments; ≈ 0.035 at 2,000) | ≥ 400 scored catalyst moments for the screen; ~2,000 for 80% power at IC 0.11 | **~8 weeks** screen (later if volume is low); 6+ months firmer. The season-0 replay gives a separate early estimate. |
-| Value of vetoes (H − R) | ~260 passed triggers | 6–10 weeks |
-| Value of management (L − LD) | 100–220 trade pairs | 5–11 weeks |
-| Value of charts (V − LD) | 150–250 disagreements | 6–13 weeks |
-| L's absolute edge, if it is +0.25R | median ~220 trades | ~11–16 weeks |
-| L's absolute edge, if it is +0.15R | median ~410 trades | ~20 weeks |
+| CATALYST selection IC (SE ≈ 0.065–0.08 day-clustered at 400–600 moments; ≈ 0.035 at 2,000) | ≥ 400 scored catalyst moments for the screen; ~2,000 for 80% power at IC 0.11 | **~8 weeks** screen (later if volume is low); 6+ months firmer. The season-0 replay gives a separate early estimate. |
+| Value of vetoes (H − R) | ~260 passed triggers | roughly 12–30 weeks at results-season volumes; longer off season |
+| Value of management (L − LD) | 100–220 trade pairs | ≥ 7–15 weeks at the 3-a-day cap; ~10–44 weeks at 1–2 a day |
+| Value of charts (V − LD, season 2) | 150–250 disagreements | 6–13 weeks at v1.1 volumes; longer on catalyst moments only |
+| L's absolute edge, if it is +0.25R | median ~220 trades | ≥ 15 weeks at the cap; ~22–44 weeks at 1–2 a day |
+| L's absolute edge, if it is +0.15R | median ~410 trades | ≥ 27 weeks at the cap; ~41–82 weeks at 1–2 a day |
 
 **Drawdown gates are stated in R, not %.** A genuinely good book (+0.15R, σ ≈ 1.3R) has a median maximum drawdown of about 12.6R over 250 trades, and a 90th percentile of 20R. The paper gate is **max drawdown ≤ 20R**, about 5% at R = 0.25%.
 
@@ -755,24 +758,24 @@ Most of this is formatted by code from the structured outputs, so it costs almos
 
 ## 16. Pre-registered kill and success criteria
 
-**Week-8 checkpoint: selection screen** (needs ≥ 35 sessions and ≥ 400 scored catalyst moments; if fewer, the screen waits until the count is reached, at the latest week 12). Trade-based checks (K3, K5) run when their trade counts are reached; at catalyst-only volumes that is likely weeks 14–20. ES has its own kill and success rules (portfolio doc §12).
+**Week-8 checkpoint: selection screen** (needs ≥ 35 sessions and ≥ 400 scored catalyst moments; if fewer, the screen waits until the count is reached, at the latest week 12). Trade-based checks (K3, K5) run when their trade counts are reached; at catalyst-only volumes (1–2 trades a day) that is likely weeks 15–30. ES has its own kill and success rules (portfolio doc §12).
 
 | ID | Test | Kill if |
 |---|---|---|
-| K1 Selection (week 8) | CATALYST-mode Spearman IC of L's `exp_R` vs `y_default` (day-clustered) | Point estimate < 0.03, **or** 90% upper bound < 0.11 (the IC needed for +0.15R). Then the LLM-as-selector idea is dead for intraday equity, and its budget moves to ES. This is a screen: at 400–600 moments it mainly rules out IC ≈ 0, so a borderline pass continues to ~2,000 moments. |
+| K1 Selection (week 8) | CATALYST-mode Spearman IC of L's `exp_R` vs `y_default` (day-clustered) | Point estimate < 0.03, **or** 90% upper bound < 0.11 (kept from v1.1, where it was the IC for +0.15R on a −0.05R pool; at realistic friction +0.15R would need 0.13–0.15, §1, and the money gate is now q10 > 0). Then the LLM-as-selector idea is dead for intraday equity, and its budget moves to ES. **This is a weak screen:** at 400–600 moments (SE ≈ 0.065–0.08) the upper-bound clause adds little and a zero-skill L still passes about 1 time in 3, so a pass continues to ~2,000 moments. |
 | K2 Veto (week 8) | Mean `y_default` of R triggers L passed vs those it took (≥ 150 vetoes) | Passed triggers do no worse than taken ones |
 | K3 Absolute (≥ 150 trades) | L net per trade after realistic trading costs and LLM ₹ | Below −0.10R, or drawdown > 20R (the paper gate; 15R would kill a genuinely good book 15–33% of the time) |
 | K4 Plan (week 4) | S − R, and the propositions' Brier skill vs climatology | Both ≤ 0: replace the Sonnet plan with a deterministic watchlist at the next season boundary (saves ~₹0.45k a month). Both clearly > 0: Opus may return for the plan if the budget allows. |
 | K5 Management (≥ 100 trades) | L − LD | Mean < 0 and the 80% interval excludes +0.05R: exits go back to code |
 | K6 Model tier (week 8) | Hk's CATALYST IC vs L's | Hk ≥ L − 0.02 with ≥ 85% agreement: Haiku becomes primary at the next season boundary (saves most of L's decision spend). This is the **economic gate** (portfolio doc §3); the savings go to ES or more moments. |
 | K7 Operations | Flip rate, schema failures, latency, cost | Flips > 20%, schema failures > 3%, p95 > 25 s, or > ₹7k a month for 2 months after the degrade ladder |
-| K-final | SPRT on L's net R (H1 +0.15R), at 16–20 weeks | Reject: stop the LLM-trader approach for intraday equity |
+| K-final | Posterior of L's net R per trade after realistic friction and LLM cost (§12.3), once ≥ 400 trades exist (≥ 27 weeks even at the cap; likely beyond year 1) | 90% upper bound below +0.03R (the bottom of the planning range): stop the LLM-trader approach for intraday equity |
 
 **Success milestones:**
 
 | Milestone | Criteria | Unlocks |
 |---|---|---|
-| **S1 "promising"** (weeks 14–20 at catalyst-only volumes) | CATALYST IC ≥ 0.10; **q10 of L's net expectancy after realistic friction and LLM cost > 0** over ≥ 150 trades (replaces "≥ +0.05R"); H − R > 0; no placebo passes any gate; flip rate < 15% | With main design Gate 1 (statistical) and Gate 2 (L0 calibration): live at L1. L0 probes themselves only calibrate fills, so they may start whenever the live account exists. |
+| **S1 "promising"** (≥ 150 trades: about weeks 15–30 at catalyst-only volumes) | CATALYST IC ≥ 0.10; **q10 of L's net expectancy after realistic friction and LLM cost > 0** over ≥ 150 trades (replaces "≥ +0.05R"); H − R > 0; no placebo passes any gate; flip rate < 15% | With main design Gate 1 (statistical) and Gate 2 (L0 calibration): live at L1. L0 probes themselves only calibrate fills, so they may start whenever the live account exists. |
 | **S2 "rely on it"** | ≥ 6 months forward and ≥ 400 trades; ≥ 3 months live; anytime-valid 95% lower bound > 0 after LLM cost; live-vs-paper gap ≤ 0.05R per trade; drawdown ≤ 20R; positive on both trend-day and range-day subsets; **net R per month ≥ the owner's own manual record, with a smaller drawdown**; and the portfolio doc's six-point "rely on a sleeve" checklist (§12 there) | Replacing manual discretionary trading, at full risk |
 
 **What happens after the week-8 verdict:**
@@ -817,9 +820,9 @@ Most of this is formatted by code from the structured outputs, so it costs almos
 
 **Arena day 1** is when items 1–7 work end to end for a full unattended paper day, with prompts frozen first (about 26 Oct; portfolio doc §13). Aim to start early enough to catch the tail of results season (to mid-November).
 - **Week 4:** plan check (K4).
-- **Week 8 (about 7 Dec):** selection screen: kill or continue (K1, K2, K6, K7).
-- **Weeks 14–20:** trade-based checks (K3, K5) and the S1 milestone.
-- **Months 4–6:** absolute-edge SPRT verdict (K-final). "Rely on it" (S2) needs ≥ 6 months.
+- **Week 8 of the arena (about 14–21 Dec; needs ≥ 35 sessions and ≥ 400 catalyst moments, §16):** selection screen: kill or continue (K1, K2, K6, K7).
+- **About weeks 15–30:** trade-based checks (K3, K5) and the S1 milestone, when ≥ 150 trades exist.
+- **K-final** when ≥ 400 trades exist, likely beyond year 1. "Rely on it" (S2) needs ≥ 6 months and ≥ 400 trades.
 
 ---
 
