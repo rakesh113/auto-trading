@@ -1,9 +1,26 @@
-# AI Trading Desk: System Design v0.3
+# AI Trading Desk: System Design v0.4
 
-**Status:** v0.3, the spec we build from. It incorporates the owner's decisions of 8 and 9 Oct 2026 (§16). **How trades are decided is specified in [`ai-trader.md`](ai-trader.md)**; where the two documents differ on that, `ai-trader.md` wins.
-**Date:** 2026-10-08.
-**Inputs:** 12 specialist and red-team reports in [`docs/research/`](../research/). They carry verified facts with sources and confidence tags. Where reports disagreed, this document uses the value the red team corrected.
+**Status:** v0.4, the spec we build from. It incorporates the owner's decisions of 8 and 9 Oct 2026 (§16) and the profitability review of 12 Oct 2026.
+**Precedence:**
+- **How trades are decided** is specified in [`ai-trader.md`](ai-trader.md); where the two documents differ on that, `ai-trader.md` wins.
+- **Which sleeves run**, how risk and the LLM budget are split, how overnight risk is measured, how size ramps, and the season-1 timeline are specified in [`portfolio-and-sleeves.md`](portfolio-and-sleeves.md); where it differs from either document on those points, it wins.
+**Date:** 2026-10-08 (v0.4: 2026-10-12).
+**Inputs:** 25 specialist and red-team reports in [`docs/research/`](../research/). They carry verified facts with sources and confidence tags. Where reports disagreed, this document uses the value the red team corrected.
 **Scope:** a **fully independent system**. It tracks and risk-manages only the orders it places, and ignores other agents, strategies and manual trades. It starts as live paper trading on the owner's laptop. The owner provides a separate account and static IP when it goes live.
+
+**What changed in v0.4** (profitability review, 12 Oct 2026; reports 19–25; the plan is [`portfolio-and-sleeves.md`](portfolio-and-sleeves.md)):
+- **Verdict: the chassis is fine; the allocation is not.** As v0.3 stood, most effort, LLM budget and risk went to minute-scale intraday cash, the cell with the weakest evidence and the highest friction. v0.4 moves them to where the evidence is.
+- **Sleeves for season 1:**
+  - **A, intraday narrowed to stocks in play:** a hard opportunity gate, realistic friction, at most 3 entries, at most 2 exit legs, 09:25–10:45 with no new entries 11:00–13:30, shorts first-class. The LLM is called only on catalyst moments.
+  - **ES, event swing (new LLM book):** after-close reads of results, orders and concalls; bought at the day-1 close in the closing auction; held 2–10 days. It replaces the 14:30 swing exception path (§7.5).
+  - **T, commodity trend:** rules only, multi-speed and volatility-targeted, gated on a 30-year backtest. It replaces C1 (§7.4).
+  - **Options:** O1 is validated offline first; O2 becomes research; O4 (overnight premium) is counterfactual only; O5 (debit spreads) is a shadow vehicle for ES (§7.2).
+  - **Scalping is cut as a sleeve;** the depth recorder keeps running (§7.3).
+- **Realistic friction** (§5): the gate uses expected cost over all exit paths with live spreads. The practical stop floor becomes about 75–80 bps at R = ₹2.5k.
+- **Portfolio layer** (§6): a composite book PF; overnight risk measured by joint scenario stress instead of summed worst cases; funding only when the 10th percentile (q10) of a sleeve's edge estimate is above 0; R ramp at ⅛ Kelly on q10; volatility targeting; drop a sleeve at the 15% and 20% drawdown rungs; a week-14 cost kill; idle cash in a liquid fund.
+- **Profit protection** blocks new risk only; it no longer flattens positions whose stops are in profit (§6).
+- **Season 0 before the freeze:** replay the post-cutoff period (1 Jul – 9 Oct 2026) and build a base-rate map, so prompts are frozen on evidence (§15).
+- **LLM:** the budget split follows portfolio doc §11 (≈ ₹5.7k in results season); the chart twin V is deferred to season 2; the season-1 game plan runs on Sonnet; Jev 1.13 leads filing triage (§9, D11).
 
 **What changed in v0.3** (owner decision, 9 Oct 2026):
 - **The LLM is the trader**, not a filter on fixed rule strategies. It writes the pre-market game plan, decides at code-detected moments (just before triggers, so execution is instant) and manages its positions. Rules become its eyes, its entry tactics and a rules-only control book. Full design: [`ai-trader.md`](ai-trader.md).
@@ -29,19 +46,20 @@
 | # | Decision | Main reason |
 |---|---|---|
 | D1 | **The LLM is the trader** ([`ai-trader.md`](ai-trader.md)). It plans the day, decides at code-detected moments and manages positions. Code is its eyes (watchers, rule library, scanners), its hands (entry tactics, OMS) and its seatbelt (risk). **The LLM can never loosen a risk limit:** code sizes, size can only shrink from the LLM's request, and stops and flatten times are code. | Owner decision. Naive rule strategies don't hold an edge; judgment is the edge. Discipline stays deterministic. |
-| D2 | **Plan the trade, trade the plan.** An Opus game plan writes IF-THEN scenarios per stock; code watches them; the LLM decides *as price approaches* a trigger; code executes the armed order the moment it fires; management is event-driven. | Discretionary judgement without LLM latency in the entries. |
-| D3 | **Costs choose the instrument.** Stocks: cash MIS. Index direction: weekly ATM/ITM options on Nifty and Sensex. **No futures for intraday.** | Budget 2026 STT: futures 0.05%, options 0.15% of premium. Cash intraday is unchanged at 0.025%. |
-| D4 | **A friction gate in code.** If estimated costs plus slippage exceed 0.2R, the trade is not taken. | Costs relative to stop size are the main way retail intraday and scalping lose. |
-| D5 | **Intraday daily loss: 2% hard limit (flatten and lock for the day).** Overnight gap risk is capped separately at 1%, so the worst possible day is 3%, the owner's stated maximum. R ≤ 0.5%, run at 0.25% in the first live stage. **Maximum drawdown 25%** (full stop), with size cut in steps well before that. | Five 3% days make a 15% drawdown. A new, unvalidated system will have such days. |
+| D2 | **Plan the trade, trade the plan.** A pre-market game plan (Sonnet in season 1) writes IF-THEN scenarios per stock; code watches them; the LLM decides *as price approaches* a trigger; code executes the armed order the moment it fires; management is event-driven. | Discretionary judgement without LLM latency in the entries. |
+| D3 | **Costs choose the instrument.** Stocks: cash MIS intraday, CNC for event swing. Index direction: long Nifty options (O1), ITM in the next weekly, only after its offline test. Commodities: MCX minis and micros, positional. **No futures for intraday, no stock futures overnight.** | Budget 2026 STT: futures 0.05%, options 0.15% of premium. Cash intraday is unchanged at 0.025%; delivery is 0.1% on both sides, still cheap relative to a multi-day stop. |
+| D4 | **A friction gate in code.** If *realistic* estimated costs plus slippage (all exit paths, live spreads, per-order brokerage) exceed 0.2R, the trade is not taken. | Costs relative to stop size are the main way retail intraday and scalping lose. |
+| D5 | **Intraday daily loss: 2% hard limit (flatten and lock for the day).** Overnight gap risk is capped separately at 1%, so the worst possible day is 3%, the owner's stated maximum. R ≤ 0.5%, run at 0.25% in the first live stage and **never above 0.25% until q10 of the sleeve's edge is above 0** (portfolio doc §8). **Maximum drawdown 25%** (full stop), with size cut in steps well before that. | Five 3% days make a 15% drawdown. A new, unvalidated system will have such days. |
 | D6 | **The paper broker is a drop-in adapter with conservative fills.** Go-live is decided per setup, on the conservative fill tier, using a sequential test (SPRT). | Paper optimism is the main cause of false go-lives. |
 | D7 | **The tick and 30-level depth recorder is built first and runs every day.** | No broker or affordable vendor sells historical depth. Every unrecorded day is lost. |
 | D8 | **Data source and execution venue are separate config choices.** Upstox supplies data through a 1-year read-only Analytics Token. Execution is `paper` now; at go-live, `upstox` or `zerodha` on a separate account the owner provides. | Paper needs no broker login or static IP, and the live broker can change without touching strategy code (§13). |
 | D9 | **Hexagonal (ports and adapters) architecture.** One engine serves replay, paper, shadow and live. Startup checks each strategy's requirements against the adapters' capabilities, and every adapter must pass a shared conformance test suite. | True plug-and-play, without silent degradation. |
-| D10 | **The arena.** The LLM trader runs side by side with a rules-only control and free counterfactual books (veto value, management ablation, placebo); a chart twin is on probation. The primary, pre-registered metric is selection skill (IC). An approach stays only if its measured improvement beats its cost. | LLM spend is a real hurdle on ₹10L, and many books invite lucky winners. |
-| D11 | **Scalping starts as a recording and research track.** The ML filter comes only after 50–100 recorded sessions. Fast LLMs (Haiku-class) handle news triage and shadow decisions; Jev's typed model is not reachable through OpenRouter (Phase-0 test). | Snapshot feeds, cost per trade, and no depth history. |
-| D12 | **MCX starts with an operations layer** (contract calendar, rolls, tender/delivery, margin stress, band locks) before any MCX strategy. Mini and micro contracts only. | Compulsory delivery, pre-expiry margin and locked-limit days are the real MCX risks. |
+| D10 | **The arena.** The intraday LLM trader and the event-swing LLM book each run side by side with rules controls, placebos and free counterfactual books (veto value, management ablation); a composite book PF applies the real allocation. The primary, pre-registered metrics are CATALYST-mode selection IC (intraday) and event IC (ES). The chart twin waits for season 2. An approach stays only if its measured improvement beats its cost. | LLM spend is a real hurdle on ₹10L, and many books invite lucky winners. |
+| D11 | **Scalping is cut as a sleeve** (v0.4); the recorder keeps recording depth. Fast models handle triage and shadow decisions: **Jev 1.13 leads filing triage** through OpenRouter's decisions endpoint (0.5–0.9 s, about $0.00002 a filing), with Haiku as fallback; Haiku is the shadow decider. | At realistic friction no scalp setup clears the gate on snapshot feeds without depth history. Jev was verified on the owner's implementation branch. |
+| D12 | **MCX starts with an operations layer** (contract calendar, rolls, tender/delivery, margin stress, band locks), then **sleeve T: rules-only commodity trend**, gated on a 30-year backtest. Mini and micro contracts only. | Compulsory delivery, pre-expiry margin and locked-limit days are the real MCX risks. Time-series momentum is the best-documented commodity edge, at about 0.03R friction. |
 | D13 | **Fully independent.** The system tracks, reconciles and risk-manages only orders carrying its own tag. Everything else in the account is ignored. | Owner decision; keeps the system self-contained. |
 | D14 | **Laptop-first for paper.** One machine, zero-ops storage (SQLite plus Parquet), restart-safe and sleep-proof. Cloud hosting and static IP come at go-live. | Owner decision; no server cost during paper. |
+| D15 | **A portfolio of sleeves** ([`portfolio-and-sleeves.md`](portfolio-and-sleeves.md)): A (intraday catalyst), ES (event swing), T (commodity trend), options as research and counterfactual books, and treasury. Risk, LLM budget and effort go where evidence, cost and LLM strengths line up. | The same LLM skill pays about twice as much where the trade pool isn't negative (portfolio doc §1). |
 
 ---
 
@@ -49,7 +67,7 @@
 
 - **Capital:** ₹10L. Daily risk appetite 2–3%. Intraday leverage up to 4x. Maximum tolerable drawdown 25%.
 - **Paper first:** live paper trading on the owner's laptop comes first. The execution venue is selected by config: paper, Upstox, Zerodha, or others later.
-- **Holding period:** intraday first. Swing trades only for exceptional setups, because of overnight geopolitical risk. A setup that passes the swing gates is held automatically; no manual approval.
+- **Holding period:** intraday first. Swing trades only for exceptional setups, because of overnight geopolitical risk. A setup that passes the swing gates is held automatically; no manual approval. (v0.4: on 12 Oct the owner asked for the most profitable mix across intraday, scalping and short-term swing. Short-term swing becomes a core sleeve, ES, because that is where the evidence is; overnight risk stays inside the 1% budget.)
 - **Modules:** intraday stocks, intraday options (index and stock), 1–10 minute scalps, and MCX commodities (intraday and positional).
 - **Universe:** liquid Nifty 500 names, focusing each day on a few that are in play by news or price.
 - **Modularity:** plug-and-play replacement of the LLM, broker, market-data and news sources.
@@ -68,6 +86,8 @@
 ---
 
 ## 2. Where the edge can come from
+
+**v0.4:** the profitability review re-ranks these by evidence and cost. Event-driven swing (2–10 days), commodity trend and the overnight index premium come first; minute-scale intraday cash comes last, and scalping is cut. The 3 × 3 edge map is in portfolio doc §1. The original v0.1 list follows.
 
 **Likely sources of edge, in order:**
 1. **Selection.** Trade 5–8 names a day whose flow is one-sided and driven by news. Sit out choppy names and bad days. Most retail losses come from trading the wrong stock on the wrong day.
@@ -91,7 +111,8 @@
 **Expectations:**
 - Year-1 success means **positive expectancy after all costs, at small size**.
 - Operating costs are capped at **₹10k a month during paper**. On the laptop that is almost all LLM spend. A full cloud stack later (VM, LLM, data, perhaps a news feed) runs about ₹15–25k a month, or 18–30% of capital a year, which is a real hurdle the trading must beat.
-- The scalping report's realistic target, if scalping works, is +0.1 to +0.25R net per trade. 3–4 of 6 candidate scalp setups may never pass the gate.
+- The scalping report's realistic target, if scalping works, is +0.1 to +0.25R net per trade. 3–4 of 6 candidate scalp setups may never pass the gate. (v0.4: scalping is cut as a sleeve; portfolio doc §7.)
+- **v0.4 expectations:** year 1 answers one question cheaply: does the LLM add net edge where it reads text? About 55% of outcomes are roughly flat (−4% to +3%), 25–30% are +8% to +15%, and about 15% are −8% to −12%, stopped by the ladder or the cost kill (portfolio doc §14).
 
 ---
 
@@ -99,8 +120,9 @@
 
 | Desk role | System component | Speed | Technology |
 |---|---|---|---|
-| Strategist | Pre-market game plan: market thesis, IF-THEN scenarios per stock, avoid list, scenario propositions | 08:30–09:05 | Opus 5.5 |
-| Analysts | Filings/news triage, then materiality analysis | Event-driven, 2–40 s | Haiku 5.5, escalating to Sonnet |
+| Strategist | Pre-market game plan: market thesis, IF-THEN scenarios per stock, avoid list, scenario propositions | 08:30–09:05 | Sonnet 5.5 in season 1 |
+| Analysts | Filings/news triage, then materiality analysis | Event-driven, 1–40 s | Jev 1.13 triage (Haiku fallback); Haiku, escalating to Sonnet |
+| **Swing analyst** | **ES: after-close deep reads of results, orders and concalls; one "rank and take ≤ k of N" call** | 16:00–19:00 | Sonnet 5.5 (low effort) |
 | **Trader** | **Decides at code-detected moments** (approach, trigger, scanner, news); manages open positions at events | 5–20 s per decision, made *before* triggers | Sonnet 5.5 (low effort) |
 | Eyes | Scenario watchers, rule library (tactics T1–T9 on the in-play list), scanners | milliseconds | Code |
 | Risk manager | Sizing, open-risk invariant, daily lock, kill switch; overrides any LLM claim | microseconds | Code |
@@ -109,7 +131,7 @@
 
 ```
  PLAN (08:30)        EYES (code, free)            DECIDE (LLM, seconds)          EXECUTE (code, ms)
- Opus game plan ──► scenario watchers ──► moment ─► Sonnet decision ─► validate ─► size (shrink only)
+ Sonnet game plan ─► scenario watchers ──► moment ─► Sonnet decision ─► validate ─► size (shrink only)
  IF-THEN per stock   rule library, scanners       (approach-time: ARM       (schema, grounding,    │
  level IDs only      news triage                  with bounds; or TAKE/      checklist, guard)     ▼
                                                   WAIT/PASS + scores)                    armed order fires
@@ -122,7 +144,8 @@
 - **Plans and decisions use level IDs, not prices.** Code resolves `L.ORH15 + 0.1 ATR` to a price, so hallucinated numbers cannot reach an order.
 - **The LLM decides; it cannot loosen risk.** Size can only shrink from its request; checklist failures (location, friction, chasing) make a trade impossible; stops and flatten times are code.
 - **News creates a blackout, not a signal.** A filing on a watched symbol pauses new entries there until triage clears it.
-- **The hot path never waits on an LLM.** Decisions happen before triggers (APPROACH) or from plans approved within the last 30 minutes (ARMED); CONFIRM is used only for setups that resolve on a bar close.
+- **The hot path never waits on an LLM.** Decisions happen before triggers (APPROACH) or from plans approved within the last 90 minutes (ARMED; `ai-trader.md` §5); CONFIRM is used only for setups that resolve on a bar close.
+- **v0.4 routing:** the intraday LLM is called only on catalyst moments; other moments go to the rules book and the Haiku shadow (`ai-trader.md` §4). ES decisions happen after the close, so latency is irrelevant there.
 
 ---
 
@@ -137,7 +160,7 @@ Details and sources are in research reports 01, 02, 06, 08 and 09.
 | **Upstox allows one active API app per user.** Generating a new token can expire the previous one. WebSocket connections, the order-rate cap, depth-30 slots and REST limits are all shared per account. | Not a constraint for this system. Paper uses only the read-only Analytics Token, and live will use a separate account (§13). |
 | The **Upstox Analytics Token** is valid for 1 year, read-only, and covers the feed and historical data. | Paper runs unattended with no daily login. The owner generates the token. The system alerts 30 days before it expires. |
 | Feeds are **conflated snapshots** (about 1–4 per second). There is no tick-by-tick data and no historical depth. Upstox `full_d30` is limited to **about 50 keys per account**, and its depth levels carry no order count. Kite offers only 5 levels. | All 50 slots belong to this system (no other websocket user); use ≤ 45. Record from day 1. Aggregate features over ≥ 10 s. Re-tier subscriptions at most every 5 minutes. |
-| **Closing Auction Session (from 3 Aug 2026)** for F&O stocks: continuous trading ends at 15:15, and SL and iceberg orders are **cancelled at 15:15**. F&O trades until 15:40. Upstox MIS square-off moved to **15:10** for CAS stocks and 15:25 for others (from 11 Sep 2026). Zerodha squares off CAS stocks at 15:12. | No new entries after **14:40** for any name. CAS names flat by **15:00**. Non-CAS names flat by **15:12**, deliberately a little earlier than the red team's 15:15. A CAS stock's official close is an auction price; treat it that way in previous-close and label logic after 3 Aug 2026. |
+| **Closing Auction Session (from 3 Aug 2026)** for F&O stocks: continuous trading ends at 15:15, and SL and iceberg orders are **cancelled at 15:15**. F&O trades until 15:40. Upstox MIS square-off moved to **15:10** for CAS stocks and 15:25 for others (from 11 Sep 2026). Zerodha squares off CAS stocks at 15:12. | No new intraday entries after **14:40** for any name (ES CNC orders go into the closing auction, §7.5). CAS names flat by **15:00**. Non-CAS names flat by **15:12**, deliberately a little earlier than the red team's 15:15. A CAS stock's official close is an auction price; treat it that way in previous-close and label logic after 3 Aug 2026. |
 | **Pre-open revised (7 Sep 2026):** 09:00–09:05 market and limit orders; 09:05–09:10 limit orders only, with a random close between 09:08 and 09:10; matching 09:10–09:12. SL orders are not accepted. Futures have had a pre-open since Dec 2025; options are excluded. | The final indicative equilibrium price arrives around 09:12. The in-play list is finalised at 09:12. |
 | **STT from 1 Apr 2026:** cash intraday 0.025% sell side (unchanged); futures 0.05% sell side; options 0.15% of sell premium. NSE transaction charge (from 1 Mar 2026, circular FA73061): cash 0.00307%, futures 0.00183%, options 0.03553% (verify; keep it in config). | Cost schedules are stored as data with effective dates, and live fills are reconciled to contract notes. |
 | Weekly expiries: **Nifty on Tuesday, Sensex on Thursday.** BankNifty, FinNifty and Midcap are monthly only. A holiday moves expiry earlier: Tue 10 Nov 2026 is a holiday, so that week's Nifty expiry is Mon 9 Nov, and Muhurat trading is Sun 8 Nov. Lot sizes are Nifty 65 and Sensex 20. An upward revision is plausible at the next review (around Dec 2026–Jan 2027), and expiries can carry different lot sizes during a transition. | Take expiry dates and lot sizes from the **contract master every day**. Never use weekday logic. Special sessions are disabled by default. |
@@ -176,6 +199,16 @@ breakeven_win_rate = (1 + friction_R) / (1 + target_R)
 
 Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol cap. The cap wins, so actual risk on that trade comes out slightly below R.
 
+**v0.4: realistic friction** (report 24; portfolio doc §3). The table above uses optimistic inputs: a 2 bps spread, 1 bp of slippage a side, and two orders. Realistic friction at a 45 bps stop is **0.25–0.32R**, not 0.2R. The gate now estimates:
+- the expected cost over all exit paths (stop, T1 partial, trail, time stop), weighted by their probability;
+- the live spread from recorded depth, by symbol and time of day;
+- the paper model's stop slippage (5 bps; 20 bps on news);
+- brokerage for every executed order (entry plus each exit leg).
+
+The 0.2R limit stays. In practice: a **stop floor of about 75–80 bps at R = ₹2.5k** (65–70 bps at ₹5k), a **spread no wider than 0.08 × the stop**, and **at most 2 exit legs**. That selects names with ATR ≥ 2.5–3%, which is the in-play set. A post-trade check is pre-registered: median realised ÷ estimated friction ≤ 1.15.
+
+**Friction by sleeve** (portfolio doc §1): intraday cash 0.15–0.32R; event swing 0.07–0.10R; MCX trend about 0.03R.
+
 **Instrument choice:**
 
 | Intent | Instrument | Why |
@@ -185,14 +218,16 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 | Index direction, hold ≤ 1.5–2 h (≤ 1 h on expiry day) | **Nifty/Sensex weekly ATM or 1-ITM option, Δ 0.55–0.65** | One Nifty futures lot costs about ₹740 in STT alone. The same delta through 2 ATM option lots costs about ₹90–130 all-in. Theta erases the advantage on longer holds. |
 | Index direction, longer hold | Debit spread | Theta |
 | Range day or theta | **Expiry-day afternoon iron fly or condor only** | The only window where taking profit at 50% of credit is realistic |
-| Swing | CNC (no leverage) or a defined-risk option spread | Gap risk |
+| Swing (ES) | CNC long (no leverage), entered and exited in the closing auction for F&O names; debit spreads as a shadow (O5) | Gap risk; stock futures are too lumpy at ₹10L |
 | MCX | Mini or micro futures, **all lots batched in one order** | Fixed ₹20 brokerage dominates small orders |
 
 **Leverage in practice.** Notional ÷ equity = R% ÷ stop%. With R = 0.5% and a 0.5% stop, that is 1x. Reaching 4x needs a 0.125% stop, which fails the friction gate. **Expect 1–2.5x gross.** 4x is a cap, not a target.
 
 **Brokerage.** Upstox Plus at ₹30/order versus Zerodha at ₹20 is about a ₹10/order difference on full-size orders. At 10 round trips a day that is about ₹59k a year, roughly 6% of capital. Because of the 0.1% cap, 1-share probe orders cost only a few rupees.
 
-**Paper cost profile.** Conservative by default: Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). A strategy that works at ₹30 per order also works at ₹20. The profile switches to the live account's actual tariff at go-live.
+**Paper cost profile.** Conservative by default: Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). A strategy that works at ₹30 per order also works at ₹20. The profile switches to the live account's actual tariff at go-live. Options paper books run under two tariffs, ₹30 and ₹0.
+
+**v0.4 cost programme** (portfolio doc §9): Upstox Plus stays as the data account (it provides the 30-level depth). At go-live, execution can move to cheaper venues: Zerodha delivery at ₹0 (worth about 0.13% per swing round trip) and ₹20 intraday, and a verified zero-brokerage API venue for options. LLM spend stays ≤ 15–20% of a sleeve's expected gross; live infrastructure ≤ ₹3k a month.
 
 ---
 
@@ -202,21 +237,23 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 |---|---|
 | **Day loss ceiling (catastrophic)** | **3% = ₹30k**, your stated maximum. This covers intraday trading plus overnight gaps combined. Hitting it trips the kill switch, with a manual reset the next day. |
 | **Intraday daily loss limit (DLL), hard** | **2% = ₹20k**, realized plus MTM of positions opened today. Hitting it flattens everything and locks the day. |
-| **Overnight gap reserve** | Positions held overnight (equity swing plus MCX positional) together may carry at most **1% = ₹10k** of *stress* gap risk. 2% intraday plus 1% gap equals the 3% ceiling. |
+| **Overnight gap reserve** | Positions held overnight (ES plus MCX positional) together may carry at most **1% = ₹10k** of *stress* gap risk. 2% intraday plus 1% gap equals the 3% ceiling. **v0.4: stress is measured by a joint scenario set** (Nifty −4% × beta with the largest name at −12%, duty cut, Gulf de-escalation and escalation, USDINR ±2%, MCX band lock, and a combined weekend), not by summing per-position worst cases. Sleeve shares (ES 0.6%, T 0.3%, O4 0.1%) decide who gives way when the check binds. At this split the check holds ES to about ₹1.5L; a 1.5% + 1.5% variant runs in the composite book for comparison (portfolio doc §8). |
 | **Effective DLL** | `DLL_eff = min(2%, 3% − today's loss on overnight positions − their remaining stress gap risk)`. Every intraday limit below is a *fraction of DLL_eff*, so the limits rescale automatically when overnight risk is carried. |
 | Soft warning | Loss reaches 60% of DLL_eff (₹12k on a clean day): size drops to 0.5x, A+ setups only. |
 | **Open-risk invariant** | `realized_today + unrealized_MTM_today − Σ open_risk_i − new_risk ≥ −0.9 × DLL_eff`. Here `open_risk_i = qty × \|LTP − stop\| + est_exit_cost`: the further loss if every stop is hit. It is 0 for a position whose stop is already in profit. |
-| R per trade | Intraday ≤ 0.5% (₹5k), with a ramp of **0.25% at live stage L1 → 0.375% at L2 → 0.5% at L3**. Scalps 0.25% (₹2.5k). Long options ₹5k (₹3k on expiry day), with premium capped so that catastrophe-cap% × premium ≤ 2R (about ₹28k at a 35% cap). Smaller R raises the share of the fixed brokerage cost, so the minimum stop rises (§5). |
-| Stop-distance floor | ≥ max(0.25% × price, 0.15 × ATR14 daily, 3 × median spread + 2 ticks), **and** friction ≤ 0.2R (§5) |
-| Open risk / concurrency | Open risk ≤ 1.5% (₹15k) total. **This cap binds first:** at full R it allows about 3 positions. The ceilings are 4 intraday positions plus 2 scalps, at most 3 in the same direction with beta > 0.8, and at most 2 per sector. |
+| R per trade | Intraday ≤ 0.5% (₹5k), with a ramp of **0.25% at live stage L1 → 0.375% at L2 → 0.5% at L3**. **v0.4:** each step also needs R ≤ ⅛ × q10 ÷ σ² (⅛ Kelly on the 10th percentile of the sleeve's edge posterior) and the volatility-target cap; **no R above 0.25% until q10 > 0**; R changes only at month boundaries (portfolio doc §8). Scalps 0.25% (₹2.5k). Long options ₹5k (₹3k on expiry day), with premium capped so that catastrophe-cap% × premium ≤ 2R (about ₹28k at a 35% cap). Smaller R raises the share of the fixed brokerage cost, so the minimum stop rises (§5). |
+| Stop-distance floor | ≥ max(0.25% × price, 0.15 × ATR14 daily, 3 × median spread + 2 ticks), **and** realistic friction ≤ 0.2R (§5), which in practice means about 75–80 bps at R = ₹2.5k |
+| Open risk / concurrency | Open risk ≤ 1.5% (₹15k) total. **This cap binds first:** at full R it allows about 3 positions. The ceilings are 4 intraday positions (v0.4: at most 3 entries a day; scalps cut), at most 3 in the same direction with beta > 0.8, and at most 2 per sector. |
 | Exposure | Gross 3x normal, **4x hard**. Per symbol ≤ 1.2x equity. Keep ≥ 20% free margin. |
 | Index exposure | Beta-weighted Nifty-equivalent delta must satisfy `delta_notional × (1.5% + vega stress) ≤ 0.9 × remaining DLL_eff`. That is about **₹10–12L on a clean day** and shrinks as the day's budget is used. |
-| Module sub-caps (fractions of DLL_eff; caps, not allocations, and not additive) | Equity 60% · Options 40% · Scalping 25% (at most ₹5k while unproven) · MCX 40% (report 11's ₹10k of a ₹25k DLL, rescaled). **Evening MCX budget = max(0, min(0.4 × DLL_eff, DLL_eff − loss so far − ₹2.5k buffer))**. |
+| Module sub-caps (fractions of DLL_eff; caps, not allocations, and not additive) | **v0.4:** Equity (sleeve A) 60%, i.e. 1.2% on a clean day; O1 shares A's cap (at most 40% of it once validated); O2 max loss ≤ ₹3k on expiry days; scalping 0 (cut); intraday MCX is a paper log with no risk. The evening MCX formula stays for any future intraday MCX sleeve: **max(0, min(0.4 × DLL_eff, DLL_eff − loss so far − ₹2.5k buffer))**. |
 | Risk day | The IST calendar date, from 09:00 to the MCX close. **One ledger across equity and MCX.** Equity profits never increase the MCX budget. |
 | Weekly / monthly | −4%: stop trading for the rest of the week. −8% in a month: halt live trading, then 10 paper sessions and a written post-mortem. In the paper phase both rules apply to the paper book; a −8% month triggers the post-mortem while paper trading continues. |
-| Drawdown ladder | 5% / 10% / 15% / 20% from the high-water mark: size 0.75x / 0.5x / 0.35x / 0.25x. At 15%, a written strategy review is mandatory while trading continues at reduced size. **25%: full stop.** |
+| Drawdown ladder | 5% / 10% from the high-water mark: size 0.75x / 0.5x. **v0.4: at 15% and 20%, switch off the sleeve with the lowest lower confidence bound** instead of shrinking everything to 0.35x / 0.25x; intraday R never goes below ₹2k, because below that brokerage alone fails the friction gate. At 15%, a written strategy review is mandatory. LLM spend steps down one degrade level per rung. **25%: full stop.** |
+| Volatility target (v0.4) | Ex-ante portfolio σ 8% a year at L1, 12% at L3, never above 15%; each sleeve scaled by min(1, target ÷ its 20-day EWMA σ). A risk control, not an alpha source. |
+| Cost kill (v0.4) | If no sleeve has LCB > 0 by week 14 of forward paper, LLM spend drops to triage only (about ₹1.5k a month). |
 | Streaks | 3 losses in a row: 30-minute cool-off, then 2 trades at 0.5x. 4 losers in a day: intraday done. |
-| Profit protection | Once the day's peak P&L is ≥ ₹10k, any new risk must keep `P&L − new_risk ≥ 0.5 × peak`. Flatten everything if P&L falls to 50% of the peak. |
+| Profit protection | Once the day's peak P&L is ≥ ₹10k, any new risk must keep `P&L − new_risk ≥ 0.5 × peak`. If P&L falls to 50% of the peak, **no new risk for the day** (v0.4); positions whose stops are already in profit run on, and the rest keep their stops. |
 | Scope | Only positions from this system's own tagged orders count. Available margin is read from the broker's funds API, so any other activity in the account can only reduce it. |
 
 **Hard rules.** These are code, never touched by the LLM, and changed only by owner-signed config outside market hours:
@@ -238,8 +275,7 @@ Note that the 40 bps row (₹12.5L notional) is just above the ₹12L per-symbol
 - Rank the watchlist and score materiality.
 - Choose targets between 1 and 4R and the trailing method.
 - Set time stops of 10–60 min.
-- Turn scalping on or off.
-- Nominate swing trades (the hard gates still apply).
+- Score events for ES and rank them (the hard gates and the overnight stress check still apply).
 - Supply the day-type prior.
 
 ---
@@ -271,19 +307,34 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 
 **Output:** 5 primary names (max 8) with depth subscription, plus 10–15 watchlist names.
 
+**Opportunity gate (v0.4, hard).** A new equity entry needs catalyst materiality ≥ 60, **or** a gap ≥ 1 ATR from the pre-open price with RVOL15 ≥ 3. Shorts are F&O names only. If nothing qualifies by 10:30, the equity book stands down; zero-trade days are expected. The in-play score ranks; the gate decides eligibility. The thresholds are fixed now and not tuned on paper.
+
 **Setups (v0.3: now the rule library).** These setups are no longer the strategy. They are (a) entry tactics the LLM trader chooses from (tactic menu T1–T9 in [`ai-trader.md`](ai-trader.md) §5: E1 ≈ T2/T3, E2 ≈ T6, E3 ≈ T7 on catalyst names), (b) moment detectors that wake the LLM, and (c) the rules-only control book R in the arena.
 
 | Setup | Trigger | Stop | Exit |
 |---|---|---|---|
 | **E1: ORB retest / first pullback** (09:30–11:00) | In-play name, OR15 width 0.25–0.8 ATR, RVOL ≥ 2, relative strength aligned. A 5-min close beyond the OR on ≥ 1.5x volume, then the first retest that holds. | OR midpoint or retest low, ≤ 0.5 ATR | Partial at 1R, then 2R+, trail on VWAP. The blend must clear the net R:R gate (§5). Time stop 45 min. |
 | **E2: VWAP reclaim / reject** (after 10:00) | VWAP sloping in the trade direction, positive relative strength. A dip below VWAP reclaimed within 2 bars on rising volume. | Dip low or VWAP − 0.2 ATR | High of day, then extension. Auto-disable after more than 4 VWAP crosses in 30 min. |
-| **E3: News-shock first pullback** | Catalyst score ≥ 7, move ≥ 1 ATR, RVOL ≥ 3. First pullback to VWAP, the 20-EMA or a 38–50% retrace, on volume below 60% of the impulse. | Pullback low − 0.1 ATR (skip if > 0.6 ATR) | 40% off at the impulse high, 30% at 2R, trail the rest. Time stop 20 min. |
+| **E3: News-shock first pullback** (built next, v0.4) | Catalyst materiality ≥ 70 (0–100 scale), move ≥ 1 ATR, RVOL ≥ 3. First pullback to VWAP, the 20-EMA or a 38–50% retrace, on volume below 60% of the impulse. | Pullback low − 0.1 ATR (skip if > 0.6 ATR) | 50% off at the impulse high, trail the rest (at most 2 exit legs). Time stop 20 min. |
+
+**v0.4 changes to the setups:** at most 2 exit legs, with the bracket (B0 default, B1 no partial with a 15-minute trail, B2 early exit if not +0.5R by 25 minutes) chosen on ≥ 300 paired entries before the freeze; E2 only on catalyst names and trend-day leaders; short setups first-class (failed rally to VWAP, PDL break and retest, first bounce after a results miss); no new entries 11:00–13:30, and 13:45–14:40 only for leaders already in play on a confirmed trend label (portfolio doc §3).
 
 **Backlog:** PDH/PDL acceptance; relative-strength divergence; gap-fill fade; results-day play (no new position in the 30 min before the board outcome, wait 3–5 min after); post-lunch range break. Full rules are in research report 03.
 
 **Day-type timing fix.** ORB fires before a 09:45 classification exists. So use the **pre-market prior plus a provisional 09:30 label, at reduced size**, then confirm at 09:45 and 10:30. **In the MVP the label is logged but blocks trading only on high-volatility event days.** The full allow/block matrix switches on once the labeller's accuracy has been validated against end-of-day labels.
 
 ### 7.2 Intraday options
+
+**v0.4 status** (portfolio doc §6; that document wins where it differs from the table below):
+- **The day/night fact:** Nifty option sellers earn the premium overnight, and short options lose on average intraday (Bhat, Pandey & Rao 2024). **Do first, at no cost:** split the recorded option-chain P&L into overnight and intraday segments; that decides O2 and O4.
+- **O1:** offline validation first on 10 years of Nifty 1-minute data, then rules paper. Trade the **next weekly** contract, ITM at Δ0.6–0.7, when the current one has ≤ 2 days left; hard flat at 15:10; shares sleeve A's daily cap. Gate: a 60-trade SPRT against a random-time placebo, tested separately before and after the closing auction began (3 Aug 2026).
+- **O2:** research only: 1 set, max loss ≤ ₹3k, plus a 2-leg variant and an unconditional twin that sells every eligible expiry.
+- **O3:** unchanged (free shadow).
+- **O4 (new, counterfactual only):** an overnight defined-risk premium book (enter Wednesday or Thursday for the next Tuesday expiry, exit at 50% of credit or Monday 15:00). Live only by explicit owner decision, because the owner's separate selling agent already carries this tail.
+- **O5 (new, shadow):** debit spreads as the vehicle for ES views; at least 7 sessions to expiry; never in expiry week.
+- **Cost stack before any selling sleeve goes live:** a low-brokerage API venue, 2-leg structures, OTM legs left to expire, all lots in one order. **Stress tests** (4 Jun 2024 replay, a synthetic −8% gap with VIX +60%, an expiry-day margin spike) run jointly with ES and the owner's selling agent.
+
+**v0.3 specification** (superseded where the status above differs):
 
 | ID | Strategy | Key rules |
 |---|---|---|
@@ -307,6 +358,11 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 **Independence.** The options module ignores other agents and accounts (owner decision). Inside this system it still shares the global risk ledger, so index exposure from options and stocks is netted in the book-delta limit (§6).
 
 ### 7.3 Scalping (3–10 min holds) and fast models
+
+**v0.4: scalping is cut as a sleeve** (portfolio doc §7). At R = ₹2.5k, a 2R target on a 45 bps stop needs a 90 bps move within 10 minutes, which is 2–3σ even for 3%-ATR stocks on a normal day, and realistic friction at that stop is 0.25–0.32R.
+- **Kept:** the depth recorder, every day; a fast-exit variant of E3/T7 on news names is the only scalp-like trade.
+- **Dropped:** order-flow index-option scalps (order-flow imbalance explains simultaneous moves, not future ones, and the feed's lag kills any lead); index-lead catch-up; wall and absorption setups; intraday relative-strength pairs. The LightGBM filter waits until some rule setup is positive at realistic friction.
+- The v0.3 text below is kept as the research record.
 
 **Honest framing:**
 - With snapshot feeds and current costs, **1–3 minute scalps are not viable**.
@@ -361,7 +417,8 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - **Access:** through OpenRouter (owner), alongside other small models.
 - **Where it fits:** the `TextDecisionModel` port, for news and filing triage (material? direction? which symbol?). From Phase 1 the triage slot runs a **bake-off**: Claude Haiku, Jev and one other small OpenRouter model answer the same filings in shadow. They are scored on Brier score, recall on big movers and cost. The winner becomes primary and the runner-up the fallback.
 - **Verify in Phase 0:** how OpenRouter exposes Jev's typed outputs (JSON schema or plain text), and its real latency from the laptop.
-  - **Result (9 Oct 2026):** the only Jev listing is `typesafe/jev-router`, a router: it served the test request with DeepSeek v4.1 Flash, ignored `response_format` and put its reasoning in the answer (about 2.5 s). `typesafe/jev-latest` is rejected as an invalid model ID. So Jev's typed-decision model is not reachable through OpenRouter on this key. The bake-off keeps `jev-router` as a candidate, but direct Jev access is needed to test the model itself. Claude Haiku 5.5 with reasoning disabled returned valid JSON in about 2 s for about $0.00004 per call.
+  - **Update (owner's implementation, 9–10 Oct 2026):** **Jev 1.13 is reachable** as a decisions model on OpenRouter's `/api/alpha/decisions` endpoint, at 0.5–0.9 s and about $0.00002 per filing. It now leads triage on every filing, with Haiku as fallback, and the bake-off is scored on event IC as well as Brier score (portfolio doc §4). The earlier result below concerned the chat listing only.
+  - **Result (9 Oct 2026, chat listing):** the only Jev listing is `typesafe/jev-router`, a router: it served the test request with DeepSeek v4.1 Flash, ignored `response_format` and put its reasoning in the answer (about 2.5 s). `typesafe/jev-latest` is rejected as an invalid model ID. So Jev's typed-decision model is not reachable through OpenRouter on this key. The bake-off keeps `jev-router` as a candidate, but direct Jev access is needed to test the model itself. Claude Haiku 5.5 with reasoning disabled returned valid JSON in about 2 s for about $0.00004 per call.
 - **An experiment worth running:** feed it anonymized feature snapshots in shadow alongside LightGBM.
 - **Why it is kept out of the numeric hot path:** validation, not latency. A zero-shot model is not calibrated to our data, can't be honestly backtested, and is non-deterministic. If it beats the alternatives on calibrated shadow metrics, it can be promoted to a gate, never to sizing.
 
@@ -382,9 +439,17 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - **Phase 2 only:** SILVERMIC intraday at 1 lot, because a 9% locked limit on one lot costs about ₹20k, the whole DLL. GOLDTEN positional, only while the duty-cut risk flag is low, because an 8% gap on one lot costs about ₹11.9k, more than the whole overnight reserve.
 - **Avoid:** standard lots, GOLDM/SILVERM, natural gas positional, base metals for now.
 
-**Fitting the 1% overnight reserve (₹10k stress).** One CRUDEOILM lot carries about ₹7.5k of 3×ATR gap risk. Six GOLDPETAL lots carry about ₹7.2k against an 8% duty-cut gap. **So in phase 1 hold one of them overnight, not both**, plus at most one small equity swing name (§7.5).
+**Fitting the 1% overnight reserve (₹10k stress).** One CRUDEOILM lot carries about ₹7.5k of 3×ATR gap risk. Six GOLDPETAL lots carry about ₹7.2k against an 8% duty-cut gap. **v0.4:** the "one of them, not both" rule is replaced by the joint scenario check (§6; portfolio doc §8). In the −12% de-escalation scenario one crude lot costs about ₹10.2k, the whole budget, so at 2% + 1% the sleeve mostly runs bullion and silver while ES is loaded.
 
-**Phase-1 strategies (paper):**
+**v0.4: sleeve T replaces C1** (portfolio doc §5; report 22). Rules only:
+- **Signals:** three EWMA crossovers (16/64, 32/128, 64/256 days) plus a 40/80/160-day breakout, combined into a forecast capped at ±2; a crude carry tilt.
+- **Sizing:** volatility-targeted at 4% a year at L1 (6% at L3), 1/N instrument weights, a 0.75-lot buffer; gold and silver capped together at 50% of sleeve risk; contract caps (CRUDEOILM 1 lot, GOLDTEN 1 or GOLDPETAL 6–12, SILVER100 2–4, NATGASMINI 0).
+- **Gap control:** event shrinks, a disaster stop at 4–5 × ATR re-armed after 10:00, no routine puts. Positional holdings are exempt from the EIA flatten (C3 still applies to intraday positions).
+- **Removed from C1:** the ADX and EMA50 filters, the no-Friday rule, the expiry-proximity skip.
+- **LLM:** calendar parsing and shrink-only flags; no direction and no veto on trend entries for at least 12 months.
+- **Gate:** a 30-year CME × USDINR backtest with duty-neutral bullion series (net Sharpe ≥ 0.3, positive in ≥ 60% of rolling 3-year windows, a parameter plateau, longs and shorts each non-negative in USD), then 8–12 weeks of clean paper operations.
+
+**v0.3 phase-1 strategies** (C1 superseded by T; C2 is a paper log with no risk; C3 stays as risk control):
 - **C1, daily trend (positional).**
   - Entry: Donchian-20 breakout, EMA50 slope, ADX > 20.
   - Exits: 2.5 ATR initial stop, then a 3 ATR chandelier.
@@ -408,6 +473,17 @@ Penalties for: spread above threshold, a move already larger than 2.5 ATR, stale
 - Live MCX execution may need Zerodha if Upstox MCX API trading is still off; decided at go-live.
 
 ### 7.5 Swing (exception path)
+
+**v0.4: replaced by sleeve ES, event swing** (portfolio doc §4; report 20). The exception path below selected on the intraday price path, which yields 1–4 holds a month and could never reach a statistical verdict. ES selects on information instead:
+- **Universe:** Nifty 500 plus liquid names (median turnover ≥ ₹10 cr), with the usual exclusions; no entry within 3 sessions before the stock's own results.
+- **Catalysts:** quarterly results (surprise against the company's own trend, options-implied move, pre-event drift, peer read-across), orders scaled to the company, concall second reads, rating changes, insider buying, blocks, and sector read-across.
+- **Pipeline:** Jev triage → numeric event card → Sonnet deep reads (10–25 a day) → an `EventScore` for **every** event → one "rank and take ≤ k of N" call after the close.
+- **Entry:** never the day-0 reaction; buy at the day-1 close if day 1 holds ≥ 50% of the day-0 move, closes in the top half of its range, on ≥ 2× normal volume. F&O names trade in the closing auction; others are sliced over 15:00–15:30.
+- **Exits:** a close-based initial stop (event-day low − 0.25 ATR, capped at 1.5 × ATR14) plus a catastrophic intraday stop at twice that distance; one-third off at +2R; trail on a close below the 10 EMA after day 3; time stop at day 10; never hold through the stock's own results.
+- **Sizing:** ₹35–70k a name, CNC long-only, at most 6 names and 2 per sector, inside the joint overnight stress check (§6).
+- **Metric:** date-clustered IC of the predicted 5-day abnormal return across all scored events; kill and success rules in portfolio doc §12.
+
+**v0.3 exception path** (superseded; kept as the record):
 
 **Qualification (all must hold):**
 - at the **14:30 decision**: already ≥ +1.5R, trading in the top 20% of the day's range so far, on RVOL ≥ 2 (the close can't be known before the flatten deadline);
@@ -463,11 +539,14 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 | 08:30–09:00 | Health checks (feed, margin, mapping). **Paper needs no daily login.** On live days the execution token can arrive as late as **09:20** without missing anything, because the first entries are at 09:25. After that, trading starts whenever it arrives and skips setups whose window has passed. Overnight positions get their stops re-armed the moment it arrives, with alerts at 09:00 and 09:10 while it is missing. |
 | 09:00–09:12 | No orders. Read the pre-open indicative price and imbalance, and finalise the in-play list at 09:12. |
 | 09:15–09:25 | Observe and build the opening range. No discretionary entries. |
-| 09:25–11:30 | Main trend window. All setups allowed, subject to day type. |
-| 11:30–13:30 | Lunch chop. No equity breakouts, no scalps, no O1; equity VWAP and fade setups only. **O2's expiry-day window (12:45–14:00) is exempt**, because it is a range strategy. |
-| European open (12:30 IST until 25 Oct, then 13:30) | Re-run the day-type classifier. Post-lunch setups, and O1, from 13:30 (O1 until 14:15). |
-| 14:40 | No new entries, any name. Swing conversions happen 14:30–14:40 (§7.5). |
+| 09:25–10:45 | **Primary window (v0.4).** Equity entries only on names that pass the opportunity gate, subject to day type. Pre-approved T7 entries from 09:25. |
+| 10:45–11:00 | Only scenarios already armed. |
+| 11:00–13:30 | **No new equity entries (v0.4)**; manage open positions. **O2's expiry-day window (12:45–14:00) is exempt**, because it is a range strategy. |
+| European open (12:30 IST until 25 Oct, then 13:30) | Re-run the day-type classifier. O1 from 13:30 (until 14:15). |
+| 13:45–14:40 | Equity entries only for leaders already in play, on a confirmed trend label. |
+| 14:40 | No new intraday entries, any name. |
 | 15:00 / 15:12 | CAS names flat / non-CAS names flat. |
+| 15:00–15:30 | **ES entries and exits** (§7.5): closing auction for F&O names, sliced for others. |
 | Nifty/Sensex expiry day (from the contract master) | No index-lead scalps after 13:00. Expiry playbook applies (O2). |
 
 ---
@@ -478,14 +557,14 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 
 | # | Role | Model | When |
 |---|---|---|---|
-| 1 | Pre-market game plan + scenario propositions | Opus 5.5, medium effort, no tool loop | 08:30–09:05 |
-| 2 | Open read and midday re-plan | Sonnet 5.5, low effort | 09:31, 12:15 |
-| 3 | Filings/news triage | Haiku 5.5, reasoning off | Event-driven, after a rule pre-filter |
+| 1 | Pre-market game plan + scenario propositions | Sonnet 5.5 in season 1 (Opus only if the plan check K4 shows value), no tool loop | 08:30–09:05 |
+| 2 | Pre-open call, open read and midday re-plan | Sonnet 5.5, low effort | 09:12, 09:31, 12:15 |
+| 3 | Filings/news triage | Jev 1.13 (decisions endpoint); Haiku 5.5, reasoning off, as fallback | Event-driven, after a rule pre-filter |
 | 4 | Materiality analysis | Haiku, escalating to Sonnet | ~10–13 items a day |
-| 5 | **Trade decisions** at moments (incl. "rank and take ≤ k of N" for bursts) | Sonnet 5.5, low effort | ≤ 40 a day |
+| 5 | **Trade decisions** at catalyst moments (incl. "rank and take ≤ k of N" for bursts) | Sonnet 5.5, low effort | ≤ 40 a day (normally far fewer) |
 | 6 | Position management | Haiku, Sonnet on news or thesis risk | ≤ 3 calls per trade |
-| 7 | Trade Critic | Sonnet (blind-first protocol) | Every swing hold |
-| 8 | Shadow decider Hk / chart twin V | Haiku / Sonnet + chart | Same moments as 5 |
+| 7 | **ES deep reads and rank call** (replaces the Trade Critic) | Sonnet 5.5, low effort | 10–25 events a day after the close |
+| 8 | Shadow decider Hk (all moments) / chart twin V (season 2) | Haiku / Sonnet + chart | Same moments as 5 |
 | 9 | Post-market review, lesson candidates | OpenRouter Batch | After hours; lessons tested offline only |
 
 **Principles** (detail in `ai-trader.md`):
@@ -499,7 +578,7 @@ The LLM supplies only a prior, and it may only downgrade the label (for example 
 - Prompt injection: scraped text is delimited untrusted data; triage has no tools; outputs still pass deterministic gates.
 - Record every call for replay and audit (≥ 5 years).
 
-**Budget:** initial LLM budget ₹5–7k a month (owner decision, 9 Oct 2026), inside the ₹10k total. Planned at ₹118/$ until the first invoice shows whether GST applies: **≈ ₹4.1k core, ≈ ₹6.6k with the chart twin and 10% contingency.** Monthly hard cap ₹7,000 with a degrade ladder (`ai-trader.md` §11). It can grow once the approach proves itself.
+**Budget:** initial LLM budget ₹5–7k a month (owner decision, 9 Oct 2026), inside the ₹10k total. Planned at ₹118/$ until the first invoice shows whether GST applies. **v0.4 split** (portfolio doc §11): ES ≈ ₹2.2k, intraday L ≈ ₹2.2k, Haiku shadow ≈ ₹0.5k, Jev triage ≈ ₹0.1k, option vetoes ≈ ₹0.1k, reserve ≈ ₹0.6k: **≈ ₹5.7k in results season, ≈ ₹4.5k off season.** Monthly hard cap ₹7,000 with a degrade ladder (`ai-trader.md` §11). It can grow once the approach proves itself.
 
 **Leakage.** Current Claude models have a June 2026 training cutoff. Evidence comes only from forward paper trading and post-cutoff replays; pre-cutoff history tests extraction accuracy, never prediction.
 
@@ -510,18 +589,18 @@ llm:
   budget_inr_month: 7000         # hard cap
   inr_per_usd_planning: 118      # until the first invoice
   routes:
-    plan:       {model: anthropic/claude-opus-5.5,   effort: medium, tools: none}
-    decide:     {model: anthropic/claude-sonnet-5.5, effort: low, allow_fallbacks: false, max_calls_day: 40}
-    replan:     {model: anthropic/claude-sonnet-5.5, effort: low}
-    triage:     {model: anthropic/claude-haiku-5.5,  reasoning: off, fallback: rules}
+    plan:       {model: anthropic/claude-sonnet-5.5, effort: low, tools: none}        # Opus only if K4 shows value
+    decide:     {model: anthropic/claude-sonnet-5.5, effort: low, allow_fallbacks: false, max_calls_day: 40, moments: catalyst}
+    replan:     {model: anthropic/claude-sonnet-5.5, effort: low}                     # pre-open 09:12, open read, re-plan
+    triage:     {model: "<Jev 1.13 ID>", endpoint: /api/alpha/decisions, fallback: anthropic/claude-haiku-5.5}
     manage:     {model: anthropic/claude-haiku-5.5,  escalate: anthropic/claude-sonnet-5.5, max_calls_per_trade: 3}
     shadow_hk:  {model: anthropic/claude-haiku-5.5,  reasoning: off}
-    chart_twin: {model: anthropic/claude-sonnet-5.5, effort: low, enabled_after: perception_gate}
-    critic:     {model: anthropic/claude-sonnet-5.5, effort: low}
+    es_read:    {model: anthropic/claude-sonnet-5.5, effort: low, allow_fallbacks: false, max_calls_day: 25}
+    chart_twin: {model: anthropic/claude-sonnet-5.5, effort: low, enabled: false}     # season 2
     review:     {model: anthropic/claude-sonnet-5.5, mode: batch}
 ```
 
-(Model IDs follow OpenRouter's naming; use the IDs verified in Phase 0.)
+(Model IDs follow OpenRouter's naming; use the IDs verified in Phase 0. For Jev, use the exact ID and endpoint from the owner's implementation.)
 
 ---
 
@@ -689,9 +768,9 @@ deploy/     laptop supervisor and sleep-prevention scripts; cloud docker-compose
 - **Marketable orders** walk the depth-30 book seen at arrival, using 70% of displayed size, with a liquidity ledger so the same displayed size can't be consumed twice.
 - **Passive limits:** on the conservative tier (the one decisions are made on) they fill only when price trades **at least one tick through** the limit; the base tier also allows a fill once the estimated queue ahead is used up.
 - **Latency** is lognormal: equity median about 120–180 ms and p95 about 450 ms; options at least 200–300 ms. During paper, the laptop's measured REST round trip to Upstox serves as a proxy (plus a margin). Proper calibration comes from live probes at stage L0.
-- **Broker behaviour is emulated:** the market-protection remainder; SL-limit orders that a gap can skip; the CAS rules (no entry, modify or cancel 15:15–15:20; auction until 15:35; v1 never trades the auction); broker square-off with its fee; fault injection (rejects, feed gaps, reconnects, token expiry).
+- **Broker behaviour is emulated:** the market-protection remainder; SL-limit orders that a gap can skip; the CAS rules (no entry, modify or cancel 15:15–15:20; auction until 15:35; intraday never trades the auction, while **ES entries and exits do**, filled at the official close within their ±1% limit); broker square-off with its fee; fault injection (rejects, feed gaps, reconnects, token expiry).
 
-**The arena** ([`ai-trader.md`](ai-trader.md) §12). A Counterfactual Outcome Engine re-simulates every decision moment with the same conservative paper-exchange code, so actions nobody took also get after-cost outcomes. Books: **L** (LLM trader), **V** (chart twin, probation), **Hk** (Haiku shadow), and free derived books **R** (rules control), **S** (plan scripted), **H** (rules propose, LLM approves), **LD** (L's entries, default exits), **E** (consensus), **P1** (placebo), plus **P2** (universe placebo) and optional **OWN** (owner taps). In season 1 index options, MCX and swing run rule-based as data collection. Each paper book trades a full virtual ₹10L at a fixed R of 0.25%.
+**The arena** ([`ai-trader.md`](ai-trader.md) §12). A Counterfactual Outcome Engine re-simulates every decision moment with the same conservative paper-exchange code, so actions nobody took also get after-cost outcomes. Books: **L** (LLM trader on catalyst moments), **Hk** (Haiku shadow on all moments), and free derived books **R** (rules control), **S** (plan scripted), **H** (rules propose, LLM approves), **LD** (L's entries, default exits), **P1** (placebo), plus **P2** (universe placebo) and optional **OWN** (owner taps). **V** (chart twin) and **E** (consensus) wait for season 2. **v0.4 adds** the ES books (ES-L, ES-R, ES-U, ES-P, ES-M, ES-J/Hk, ES-O5), sleeve T and the options research and counterfactual books (O1, O2, O4, O5), and the **composite book PF**, which runs the real allocation through one risk engine in two variants (2% + 1% and 1.5% + 1.5%). Each standalone book trades a full virtual ₹10L at a fixed R of 0.25%; paper books credit about 6% a year on idle cash, so "profitable" means beating it.
 
 **Stage L0, live probes (at go-live, not during paper):**
 - When the owner opens the live account, the first 2–3 weeks are 1-share probe orders, 20–40 a day, each with a paper twin.
@@ -710,6 +789,8 @@ deploy/     laptop supervisor and sleep-prevention scripts; cloud docker-compose
 The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about 220 trades if the true edge is +0.25R, about 410 if it is +0.15R. Selection skill (IC) is answerable much sooner, at about 1,000 scored moments (≈ 8 weeks).
 
 **4–6 weeks of paper proves the plumbing. A go/no-go needs about 205 trades *per setup*.** At a realistic 2–4 trades a day per setup, that is 10–20 weeks. So the first setup can go live around week 14–20, and the others later. This is why phase 1 has only 2–3 setups.
+
+**v0.4 money gates** (portfolio doc §12): intraday L needs q10 of net expectancy after realistic friction and LLM cost > 0 (instead of +0.15R); ES is judged on scored events for the signal (kill at 1,000 events, verdict at 2,000) and needs ≥ 100 trades with LCB > 0 for money; T is gated on its backtest plus clean paper operations; O1 on a 60-trade SPRT against its placebo. Gate 1 below still applies to every book before live money.
 
 **Gate 1, paper evidence (statistical)** (all of these):
 - ≥ 40 trading days.
@@ -768,9 +849,11 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | 08:30 | Pre-market brief |
 | 09:12 | In-play list finalised; subscriptions tiered |
 | Market hours | Trading |
-| 14:40 | Entry cutoff (swing conversions 14:30–14:40) |
+| 14:40 | Intraday entry cutoff |
 | 15:00 / 15:12 | Flatten |
+| 15:00–15:30 | ES orders in the closing auction (F&O names) or sliced (others) |
 | 15:45 | End-of-day reconciliation, P&L after charges, journal, review, backups |
+| 16:00–19:00 | ES pipeline: triage, event cards, deep reads, rank call |
 | Evening | MCX session until the time stop |
 
 **Hosting:**
@@ -797,14 +880,16 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 
 ## 15. Roadmap
 
+**v0.4: the season-1 timeline is in portfolio doc §13 and supersedes the week numbers below where they differ.** In short: season 0 (the post-cutoff replay, base-rate map, exit brackets, option day/night split, MCX backtest and O1 offline test) runs in weeks 1–3 alongside the remaining Phase 1 build; prompts are frozen about 26 Oct; the replay verdict and ES paper start come by about 9 Nov; the week-8 intraday screen is about 7 Dec; the ES interim verdict is mid-December; the week-14 cost kill is about 18 Jan 2027; the ES final verdict comes in Feb–Mar 2027, and the earliest live step only for sleeves with q10 > 0.
+
 | Phase | When | Build | Exit criterion |
 |---|---|---|---|
 | **0: Foundations and recorder** | weeks 0–2 | Repository skeleton; domain, ports, config, clock; instrument master and canonical mapping; session, holiday and cost tables; Upstox V3 feed on the Analytics Token; **recorder live**; data-quality report; laptop supervisor, sleep prevention and backups; API keys wired (Anthropic, OpenRouter) | 10 clean recorded sessions; 30 levels confirmed; feed-lag distribution known |
-| **1: AI trader MVP and arena** | weeks 2–5 | Following [`ai-trader.md`](ai-trader.md) §17: Phase-0 LLM gates through OpenRouter; conservative paper exchange and the **Counterfactual Outcome Engine**; snapshot/sitrep builder with level IDs, shape features and information cards; moment engine (scenario watchers, rule library T1–T9, scanners, caps, bursts); **brain routes** (plan, decisions, management, triage, review) with validators and budget governor; arena ledger (L, Hk, R, S, H, LD, P1, P2); Telegram (plan, trade cards, taps, journal, `/why`) | **Arena day 1:** a full unattended paper day end to end; replay parity 100%; COE parity ≤ 0.02R |
-| **2: Arena season 1 and module expansion (paper)** | weeks 5–13 | Chart renderer → perception gate → **V** (early-stop decision in arena weeks 3–4) and E; week-4 plan check; **week-8 selection screen: kill or continue**, then trade-based checks in weeks 10–14 (`ai-trader.md` §16); rules-only scalping research on depth-30 names; **MCX operations layer plus C1–C3** (rule-based); **swing module** (automatic, critic-gated); O2 expiry-day in paper; season tooling (identity hashing, replay dojo, lesson candidates) | Pre-registered week-8 criteria; each module unattended with zero risk breaches |
+| **1: AI trader MVP, season 0 and arena** | weeks 2–5 | Following [`ai-trader.md`](ai-trader.md) §17: **season 0** (post-cutoff replay, base-rate map, exit brackets, option day/night split, MCX backtest, O1 offline test); realistic friction and opportunity gates; Phase-0 LLM gates through OpenRouter; conservative paper exchange and the **Counterfactual Outcome Engine** (recorded depth for intraday, daily bars and auction prices for ES); snapshot/sitrep builder with level IDs, shape features and information cards; moment engine with catalyst routing; **brain routes** (plan, pre-open call, decisions, ES reads, management, Jev triage, review) with validators and budget governor; arena ledger (L, Hk, R, S, H, LD, P1, P2, ES books, PF); Telegram (plan, trade cards, taps, journal, `/why`) | **Arena day 1** with prompts frozen (about 26 Oct): a full unattended paper day end to end; replay parity 100%; COE parity ≤ 0.02R; replay verdict by about 9 Nov |
+| **2: Arena season 1 (paper)** | weeks 5–13 | Week-4 plan check; **week-8 selection screen (CATALYST IC): kill or continue**; ES interim verdict at 1,000 events (mid-December); E3; **MCX operations layer, then sleeve T** after its backtest; O1 rules paper after its offline test; O2, O4 and O5 research and counterfactual books; composite book PF in both split variants; week-14 cost kill; season tooling (identity hashing, replay dojo, lesson candidates) | Pre-registered criteria (`ai-trader.md` §16; portfolio doc §12); each sleeve unattended with zero risk breaches |
 | **3: Go-live preparation** | when the owner is ready; ideally from about week 10 | Live execution adapter for the owner's chosen broker (Upstox or Zerodha); reconciliation; `deadman`; owner sets up the static-IP host; **stage L0 probes** (2–3 weeks) | Calibration criteria met (§12) |
-| **4: First live** | about weeks 15–20 | A book that reaches the arena's S1 milestone and passes Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. "Rely on it instead of manual trading" (S2) needs ≥ 6 months of forward evidence. | Gates in §12 and `ai-trader.md` §16 |
-| **5: Expansion** | months 4–6+ | Meta-labeler on L's decisions (after 600 moments); lesson forks and precedent retrieval; index-options LLM book; Owner Twin; scalping ML filter (after 50–100 recorded sessions); MCX and swing LLM books only after equity is proven | Per-module gates |
+| **4: First live** | earliest Feb–Mar 2027 (portfolio doc §13) | Only a sleeve with q10 > 0 that passes its own gates and Gate 1 and Gate 2 goes live at R = 0.25%, then ramps L1 → L2 → L3 by the q10 rule. O2 needs ≥ 10 weeks of paper covering 8+ Nifty and 8+ Sensex expiries and 40 trades. "Rely on it instead of manual trading" (S2) needs ≥ 6 months of forward evidence. | Gates in §12 and `ai-trader.md` §16 |
+| **5: Expansion** | months 4–6+ | Meta-labeler on L's decisions (after 600 moments); chart twin V (season 2, only if L passes K1); lesson forks and precedent retrieval; index-options LLM book; Owner Twin; scalping ML filter only if a rule setup is positive at realistic friction; no LLM direction on MCX trend for at least 12 months | Per-module gates |
 
 ---
 
@@ -834,6 +919,12 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | 15 | LLM budget | ₹5–7k a month initially; more later if it works. | ≈ ₹4.1k core, ≈ ₹6.6k with the chart twin; hard cap ₹7k (§9). |
 | 16 | Chart images | Delegated: decide what works best. | Numeric-first; chart twin on probation with a pre-registered keep/drop rule (`ai-trader.md` §10). |
 | 17 | Goal | A system to rely on instead of manual discretionary trading. | Pre-registered success milestones S1 and S2, with the owner's own record as the bar for S2 (`ai-trader.md` §16). |
+
+**Owner decisions asked for by v0.4** (portfolio doc §15):
+1. **Worst-day split at go-live:** keep 2% + 1%, or move to 1.5% + 1.5% (recommended once ES passes its interim check, because it roughly doubles what ES and T can hold overnight). Both run in the composite book during paper.
+2. **Live execution venues:** Upstox Plus as the data account; execution on cheaper venues at go-live.
+3. **The separate options-selling agent:** feed its positions read-only into the overnight stress, or ring-fence its capital outside this system's 3%.
+4. **Owner tradebook** (optional, recommended).
 
 **Default applied without an answer:** the paper cost model uses Upstox Plus rates (₹30 or 0.1% per order, whichever is lower). That is conservative: a strategy that works at ₹30 also works at ₹20. It switches to the live account's tariff at go-live.
 
@@ -865,8 +956,15 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | 16 | [arena-evaluation](../research/16-arena-evaluation.md) | Counterfactual engine, books, statistics, meta-labeler, allocation |
 | 17 | [edge-memory-trust](../research/17-edge-memory-trust.md) | Memory and lessons, information edges, regime, trust UX, new ideas |
 | 18 | [red-team-llm-trader](../research/18-red-team-llm-trader.md) | Rulings, failure modes, minimal v1, kill and success criteria |
+| 19 | [profitability-edge-map](../research/19-profitability-edge-map.md) | The 3 × 3 edge map and sleeve ranking |
+| 20 | [event-swing-sleeve](../research/20-event-swing-sleeve.md) | Why the LLM's edge is at the daily horizon; the ES specification |
+| 21 | [options-profitability](../research/21-options-profitability.md) | Day/night premium, O1/O2/O4/O5, the cost stack |
+| 22 | [commodity-trend-sleeve](../research/22-commodity-trend-sleeve.md) | Multi-speed trend, scenario stress, MCX costs |
+| 23 | [portfolio-and-risk](../research/23-portfolio-and-risk.md) | Composite book, Kelly and LCB sizing, Monte Carlo, cost drag |
+| 24 | [intraday-scalping-profitability](../research/24-intraday-scalping-profitability.md) | Realistic friction, opportunity gate, exits, cuts |
+| 25 | [red-team-profitability](../research/25-red-team-profitability.md) | Final rulings, top-10 list, expectations |
 
-*Facts are as of 2026-10-08. Several are tagged medium or low confidence in the research and are marked "verify" here. Recheck them during Phase 0, because rules changed 7 times in the past 8 months.*
+*Facts are as of 2026-10-08 (reports 19–25: 2026-10-12). Several are tagged medium or low confidence in the research and are marked "verify" here. Recheck them during Phase 0, because rules changed 7 times in the past 8 months.*
 
 ---
 
@@ -879,3 +977,4 @@ The arena uses a more conservative σ ≈ 1.3R with within-day clustering: about
 | v0.2 | 2026-10-08 | Owner decisions: independent system, laptop paper hosting, 25% maximum drawdown, automatic swing, OpenRouter/Jev bake-off, budget, live probes moved to go-live |
 | v0.2.1 | 2026-10-09 | Implementation decisions: Python confirmed; asyncio instead of uvloop on the Windows laptop; no Upstox SDK; all LLMs through OpenRouter; venue chosen by `execution.venue` with a live-trading guard |
 | v0.3 | 2026-10-09 | The LLM becomes the trader (`ai-trader.md`): plan-the-trade loop, decision moments, arena with counterfactual books, selection IC as primary metric, chart twin on probation, ₹5–7k LLM budget, pre-registered kill/success criteria; drawdown gate stated in R; roadmap re-planned |
+| v0.4 | 2026-10-12 | Profitability review (`portfolio-and-sleeves.md`, reports 19–25): sleeves A (narrowed intraday), ES (event swing, new LLM book), T (commodity trend, rules); options re-scoped (O1 offline, O2 research, O4 counterfactual, O5 shadow); scalping cut; realistic friction and a wider stop floor; joint scenario stress for overnight risk; q10 funding, ⅛-Kelly R ramp, volatility target, sleeve-drop ladder, week-14 cost kill; profit protection blocks new risk only; season-0 replay; LLM budget re-split, V deferred, Sonnet plan, Jev leads triage. **Merge note:** the owner's `phase1-paper-mvp` branch also uses "v0.3" (Phase 1 built) and adds §18 implementation notes with the change log as §19, so merging will conflict here and in the header. Resolve by keeping its §18 and renumbering: its v0.3 entry becomes v0.3.1, this one stays v0.4. |
