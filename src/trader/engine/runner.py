@@ -48,6 +48,7 @@ INDEX = InstrumentId.parse("NSE:IDX:NIFTY50")
 VIX = InstrumentId.parse("NSE:IDX:INDIAVIX")
 BOOKS = (("A", True), ("B", False))  # (name, day-type gated)
 SETUPS = ("E1_ORB_RETEST", "E2_VWAP_RECLAIM")
+FEED_SILENT_S = 60  # market-hours silence from the recorder that warrants an alert
 
 
 def load_sectors(data_dir: Path) -> dict[str, str]:
@@ -239,10 +240,27 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
             last_alert[0] = wall.now_ns()
             notify(f"Paper engine error in {where}; continuing. See logs.", Severity.WARN)
 
+    open_ns = datetime.combine(day, time(9, 15), IST).timestamp() * 1e9
+    last_feed = [wall.now_ns()]
+    silent = [False]
+
+    def watch_feed(now: int) -> None:
+        """The recorder can stall without exiting; say so instead of trading blind in silence."""
+        quiet_s = (now - last_feed[0]) / 1e9
+        if not silent[0] and now >= open_ns and quiet_s >= FEED_SILENT_S:
+            silent[0] = True
+            journal.write(now, "*", "feed_silent", {"quiet_s": round(quiet_s)})
+            notify(f"No market data from the recorder for {quiet_s:.0f}s; paper engine is blind.", Severity.WARN)
+        elif silent[0] and quiet_s < FEED_SILENT_S:
+            silent[0] = False
+            journal.write(now, "*", "feed_resumed", {})
+            notify("Market data from the recorder resumed.")
+
     async def heartbeat() -> None:
         while not engine.ended:
             await asyncio.sleep(1.0)
             now = wall.now_ns()
+            watch_feed(now)
             if now > clock.now_ns() + 1_500_000_000:
                 clock.set(now)
                 try:
@@ -255,6 +273,8 @@ async def run_paper_day(cfg: AppConfig, day: date) -> dict[str, Any]:
     try:
         async for ev in feed.events():
             ts = getattr(ev, "ts_recv_ns", 0)
+            if ts:
+                last_feed[0] = wall.now_ns()
             if ts > clock.now_ns():
                 clock.set(ts)
             try:

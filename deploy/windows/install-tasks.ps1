@@ -6,7 +6,9 @@
 param([string]$RunDir = "")
 $ErrorActionPreference = "Stop"
 $repo = if ($RunDir) { (Resolve-Path $RunDir).Path } else { (Resolve-Path "$PSScriptRoot\..\..").Path }
-$python = Join-Path $repo ".venv\Scripts\python.exe"
+# pythonw: no console window. A visible console froze the recorder for an hour on 2026-10-13
+# (a click into a console window pauses every process writing to it). Logs go to <data_dir>\logs.
+$python = Join-Path $repo ".venv\Scripts\pythonw.exe"
 if (-not (Test-Path $python)) { throw "venv not found at $python. Run: python -m venv .venv; .venv\Scripts\pip install -e .[dev]" }
 
 $action = New-ScheduledTaskAction -Execute $python -Argument "-m trader.apps.cli supervise" -WorkingDirectory $repo

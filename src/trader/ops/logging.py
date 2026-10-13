@@ -10,7 +10,11 @@ import structlog
 
 
 def setup_logging(level: str = "INFO", log_dir: Path | None = None, name: str = "trader") -> None:
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
+    # Under pythonw (the unattended services) there is no console, and sys.stderr is None.
+    # A console window is a hazard there: clicking into it pauses every process writing to it.
+    handlers: list[logging.Handler] = []
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler(sys.stderr))
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_dir / f"{name}.jsonl", encoding="utf-8"))
@@ -27,8 +31,9 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None, name: str = 
         wrapper_class=structlog.make_filtering_bound_logger(logging.getLevelName(level)),
         cache_logger_on_first_use=True,
     )
-    for i, h in enumerate(handlers):
-        renderer = structlog.dev.ConsoleRenderer(colors=False) if i == 0 else structlog.processors.JSONRenderer()
+    for h in handlers:
+        renderer = (structlog.processors.JSONRenderer() if isinstance(h, logging.FileHandler)
+                    else structlog.dev.ConsoleRenderer(colors=False))
         h.setFormatter(structlog.stdlib.ProcessorFormatter(
             processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                         structlog.processors.format_exc_info, renderer],
