@@ -13,10 +13,15 @@ if (-not (Test-Path $python)) { throw "venv not found at $python. Run: python -m
 
 $action = New-ScheduledTaskAction -Execute $python -Argument "-m trader.apps.cli supervise" -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet `
+# -Priority 4 = normal. Task Scheduler's default (7) runs every child at BelowNormal, so any
+# foreground load starves the recorder: on 2026-10-14 a software install (Restart Manager
+# session 11:23:57-11:25:56) froze it for 68 s and Upstox dropped all four feed sockets.
+$settings = New-ScheduledTaskSettingsSet -Priority 4 `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit (New-TimeSpan -Days 3650) -MultipleInstances IgnoreNew
+    -ExecutionTimeLimit (New-TimeSpan -Days 3650) -MultipleInstances IgnoreNew -Priority 2
+# Priority 2 = AboveNormal (the Task Scheduler default, 7, is BelowNormal). Children inherit it,
+# so installs/updates competing for CPU don't stall the recorder long enough for Upstox to drop it.
 Register-ScheduledTask -TaskName "AutoTrading-Supervisor" -Action $action -Trigger $trigger -Settings $settings `
     -Description "auto-trading: recorder and services (restarts on crash)" -Force | Out-Null
 
