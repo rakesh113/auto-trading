@@ -141,6 +141,7 @@ class FilingStore:
         self.path = path
         self._db = sqlite3.connect(path, isolation_level=None, check_same_thread=False, timeout=10)
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")  # no fsync per insert; the OS batches writes
         self._db.execute("""CREATE TABLE IF NOT EXISTS filings (key TEXT PRIMARY KEY, exchange TEXT, symbol TEXT,
             isin TEXT, iid TEXT, routine INTEGER, content_hash TEXT, first_seen_ns INTEGER, ts_exchange_ns INTEGER,
             data TEXT)""")

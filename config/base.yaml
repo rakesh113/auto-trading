@@ -49,7 +49,7 @@ throttle:
 recorder:
   rotate_minutes: 15
   zstd_level: 3
-  flush_every_s: 2
+  flush_every_s: 10   # HDD: batch bronze writes (a crash loses at most this much raw data)
   bronze_retention_days: 30
 
 notifier:
