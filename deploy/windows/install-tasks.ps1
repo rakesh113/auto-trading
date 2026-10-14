@@ -19,9 +19,7 @@ $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -Priority 4 `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit (New-TimeSpan -Days 3650) -MultipleInstances IgnoreNew -Priority 2
-# Priority 2 = AboveNormal (the Task Scheduler default, 7, is BelowNormal). Children inherit it,
-# so installs/updates competing for CPU don't stall the recorder long enough for Upstox to drop it.
+    -ExecutionTimeLimit (New-TimeSpan -Days 3650) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "AutoTrading-Supervisor" -Action $action -Trigger $trigger -Settings $settings `
     -Description "auto-trading: recorder and services (restarts on crash)" -Force | Out-Null
 
