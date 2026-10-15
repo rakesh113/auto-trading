@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections import deque
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING
 
@@ -126,6 +127,9 @@ class _Connection:
                             log.exception("feed.decode_error", conn=self.name)
                             continue
                         self.health.messages += len(events)
+                        server_ms = next((e.ts_server_ms for e in events if getattr(e, "ts_server_ms", 0)), 0)
+                        if server_ms:
+                            self.health.lag_ms.append(ts / 1e6 - server_ms)
                         for ev in events:
                             self.feed._publish(ev)
             except asyncio.CancelledError:
@@ -239,7 +243,7 @@ class UpstoxMarketFeed(MarketDataFeed):
             yield await self._q.get()
 
     def health(self) -> FeedHealth:
-        h = FeedHealth(dropped=self._dropped)
+        h = FeedHealth(dropped=self._dropped, lag_ms=deque(maxlen=600 * max(1, len(self._conns))))
         h.connected = all(c.health.connected for c in self._conns if c.want)
         for c in self._conns:
             h.frames += c.health.frames
@@ -247,6 +251,7 @@ class UpstoxMarketFeed(MarketDataFeed):
             h.reconnects += c.health.reconnects
             h.decode_errors += c.health.decode_errors
             h.last_msg_ns = max(h.last_msg_ns, c.health.last_msg_ns)
+            h.lag_ms.extend(c.health.lag_ms)
             for k, v in c.health.subscribed.items():
                 h.subscribed[k] = h.subscribed.get(k, 0) + v
         return h

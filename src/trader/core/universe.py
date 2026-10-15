@@ -112,9 +112,9 @@ def build_recording_plan(master: InstrumentMaster, uni: dict[str, Any], today: d
     if rec.get("ltpc_nifty500"):
         for s in nifty500:
             plan.add(eq(s), FeedMode.LTPC, f"nifty500:{s}")
-    for s in rec.get("ltpc_indices", []):
+    for s in rec.get("full_indices", rec.get("ltpc_indices", [])):
         iid = InstrumentId.parse(s)
-        plan.add(iid if master.find(iid) else None, FeedMode.LTPC, f"index:{s}")
+        plan.add(iid if master.find(iid) else None, FeedMode.FULL, f"index:{s}")
     if rec.get("full_fno_stocks"):
         for s in sorted(fno_stock_underlyings(master)):
             plan.add(eq(s), FeedMode.FULL, f"fno:{s}")

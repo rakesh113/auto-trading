@@ -18,9 +18,10 @@ record:
   # C2 full: every F&O stock plus these index futures (nearest expiry)
   full_fno_stocks: true
   full_index_futures: [NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY]
-  # C3 ltpc: Nifty 500 + these indices (canonical IDX symbols)
+  # C3 ltpc: Nifty 500. Indices go in C2 full mode: only full mode carries the day's
+  # open/high/low candle that the day-type labeller and relative strength need.
   ltpc_nifty500: true
-  ltpc_indices: [NSE:IDX:NIFTY50, NSE:IDX:NIFTYBANK, NSE:IDX:INDIAVIX, NSE:IDX:NIFTYFINSERVICE,
+  full_indices: [NSE:IDX:NIFTY50, NSE:IDX:NIFTYBANK, NSE:IDX:INDIAVIX, NSE:IDX:NIFTYFINSERVICE,
                  NSE:IDX:NIFTYMIDSELECT, NSE:IDX:NIFTYIT, NSE:IDX:NIFTYAUTO, NSE:IDX:NIFTYPHARMA,
                  NSE:IDX:NIFTYMETAL, NSE:IDX:NIFTYFMCG, NSE:IDX:NIFTYREALTY, NSE:IDX:NIFTYPSUBANK,
                  NSE:IDX:NIFTYENERGY, NSE:IDX:NIFTYMIDCAP100, NSE:IDX:NIFTYSMLCAP100, BSE:IDX:SENSEX]

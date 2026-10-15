@@ -56,7 +56,10 @@ traders: Registry[Any] = Registry(
     "trader.traders",
     {"paper": "trader.adapters.paper.trader", "upstox": "trader.adapters.upstox.trader"},
 )
-feeds: Registry[Any] = Registry("feed", "trader.feeds", {"upstox": "trader.adapters.upstox.feed"})
+feeds: Registry[Any] = Registry(
+    "feed", "trader.feeds",
+    {"upstox": "trader.adapters.upstox.feed", "local": "trader.adapters.local.feed"},
+)
 masters: Registry[Any] = Registry(
     "instrument master", "trader.masters", {"upstox": "trader.adapters.upstox.instruments"}
 )

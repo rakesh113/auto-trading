@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import AsyncIterator, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -22,6 +23,16 @@ class FeedHealth:
     dropped: int = 0  # events dropped because consumers fell behind
     decode_errors: int = 0
     subscribed: dict[str, int] = field(default_factory=dict)  # mode -> count
+    # our receive time − venue server time, per frame (ms). Network latency plus clock offset:
+    # a persistently negative minimum means our clock is behind the venue's.
+    lag_ms: deque[float] = field(default_factory=lambda: deque(maxlen=600))
+
+    def lag_summary(self) -> dict[str, float | None]:
+        xs = sorted(self.lag_ms)
+        if not xs:
+            return {"min": None, "p50": None, "p95": None}
+        return {"min": round(xs[0], 1), "p50": round(xs[len(xs) // 2], 1),
+                "p95": round(xs[min(len(xs) - 1, int(0.95 * len(xs)))], 1)}
 
 
 class MarketDataFeed(ABC):

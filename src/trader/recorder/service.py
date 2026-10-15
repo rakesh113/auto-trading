@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 import structlog
@@ -32,7 +32,10 @@ from trader.domain.types import IST, Exchange, FeedMode
 from trader.ops.power import keep_awake
 from trader.ports.clock import now_ist
 from trader.ports.infra import Severity
+from trader.recorder.broadcast import FrameBroadcaster
 from trader.recorder.bronze import BronzeRecorder
+from trader.recorder.dq import verdict
+from trader.recorder.silver import backup, build_silver, disk_free_gb, prune_bronze
 
 log = structlog.get_logger(__name__)
 
@@ -48,6 +51,7 @@ class _SpotTracker:
         self.events = 0
         self.states: list[str] = []
         self.alerted_down = False
+        self.alerted_clock = False
 
     def __call__(self, ev: MarketEvent) -> None:
         self.events += 1
@@ -78,8 +82,12 @@ async def _sleep_until(dt: datetime) -> None:
 async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[str, Any]:
     """Record one session. Returns a summary."""
     data_dir = cfg.system.data_dir
-    recorder = BronzeRecorder(data_dir, rotate_minutes=cfg.recorder.rotate_minutes,
-                              zstd_level=cfg.recorder.zstd_level, flush_every_s=cfg.recorder.flush_every_s)
+    bronze = BronzeRecorder(data_dir, rotate_minutes=cfg.recorder.rotate_minutes,
+                            zstd_level=cfg.recorder.zstd_level, flush_every_s=cfg.recorder.flush_every_s)
+    recorder: BronzeRecorder | FrameBroadcaster = bronze
+    if cfg.recorder.broadcast_port:
+        recorder = FrameBroadcaster(bronze, port=cfg.recorder.broadcast_port)
+        await recorder.start()
     app = build_app(cfg, recorder=recorder, with_trader=False)
     feed = app.feed
     assert feed is not None
@@ -146,8 +154,9 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
                     "ts": now_ist(_CLOCK).isoformat(timespec="seconds"), "connected": h.connected,
                     "frames": h.frames, "events": h.messages, "reconnects": h.reconnects,
                     "decode_errors": h.decode_errors, "dropped_feed": h.dropped,
-                    "recorder_written": recorder.written, "recorder_dropped": recorder.dropped,
-                    "subscribed": h.subscribed, "recent_states": tracker.states[-10:],
+                    "recorder_written": bronze.written, "recorder_dropped": bronze.dropped,
+                    "subscribed": h.subscribed, "lag_ms": h.lag_summary(),
+                    "recent_states": tracker.states[-10:],
                 }
                 status_path.write_text(json.dumps(status, indent=1), encoding="utf-8")
                 log.info("recorder.status", **{k: v for k, v in status.items() if k != "recent_states"})
@@ -158,6 +167,11 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
                 elif down_checks == 0 and tracker.alerted_down:
                     await notify("Recorder feed recovered")
                     tracker.alerted_down = False
+                lag = status["lag_ms"]
+                if lag["min"] is not None and not tracker.alerted_clock and (lag["min"] < -100 or lag["p50"] > 3000):
+                    # min < 0: our clock is behind Upstox's; p50 > 3 s: the feed itself is delayed
+                    await notify(f"Clock/feed lag abnormal: {lag} ms (receive minus server time)", Severity.WARN)
+                    tracker.alerted_clock = True
                 if asyncio.get_running_loop().time() - last_recenter >= recenter_s:
                     last_recenter = asyncio.get_running_loop().time()
                     g = await greeks_want()
@@ -172,10 +186,34 @@ async def record_day(cfg: AppConfig, *, until: datetime | None = None) -> dict[s
         finally:
             await app.stop()
     h = feed.health()
+    try:
+        eod = await asyncio.to_thread(end_of_day, cfg, today)
+    except Exception as e:  # noqa: BLE001 - housekeeping failure must not lose the day's alert
+        log.exception("recorder.eod_failed")
+        eod = f"end-of-day processing FAILED: {e!r}"
     await notify(f"Recorder day done {today}: frames={h.frames:,} reconnects={h.reconnects} "
-                 f"written={recorder.written:,} dropped={recorder.dropped}. Run `trader dq` for the report.")
-    return {"frames": feed.health().frames, "written": recorder.written, "dropped": recorder.dropped,
+                 f"dropped={bronze.dropped}. {eod}")
+    return {"frames": feed.health().frames, "written": bronze.written, "dropped": bronze.dropped,
             "unmapped": plan.missing}
+
+
+def end_of_day(cfg: AppConfig, day: date) -> str:
+    """Silver conversion + data-quality verdict + retention + backup. Returns a summary line."""
+    data_dir = cfg.system.data_dir
+    report = build_silver(data_dir, day)
+    rows = sum(report.get("silver_rows", {}).values())
+    pruned = prune_bronze(data_dir, day, cfg.recorder.bronze_retention_days)
+    parts = [f"Data quality: {verdict(report)}", f"silver rows={rows:,}"]
+    if pruned:
+        parts.append(f"pruned raw days={len(pruned)}")
+    if cfg.recorder.backup_dir:
+        try:
+            parts.append(f"backed up {backup(data_dir, cfg.recorder.backup_dir)} files")
+        except OSError as e:
+            parts.append(f"BACKUP FAILED: {e}")
+    free = disk_free_gb(data_dir)
+    parts.append(f"disk free {free:.0f} GB" + (" (LOW)" if free < cfg.recorder.min_free_gb else ""))
+    return "; ".join(parts)
 
 
 async def _alert(cfg: AppConfig, text: str) -> None:

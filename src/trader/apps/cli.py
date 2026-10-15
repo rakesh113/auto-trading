@@ -5,7 +5,11 @@
   record        run the daily recorder forever (what the supervisor runs)
   record-now    record from now for N minutes (smoke test; works outside hours too)
   dq            data-quality report for a recorded day
-  supervise     start and babysit the long-running services
+  eod           end-of-day: silver Parquet + quality verdict + raw-file retention + backup
+  paper         paper trading every trading day (books A gated, B baseline), from the recorder's feed
+  intel         filings (NSE/BSE), triage bake-off and pre-market brief, all in shadow
+  replay        re-run a recorded day through the same engine; prints the journal digest
+  supervise     start and babysit the long-running services (recorder + paper)
 """
 
 from __future__ import annotations
@@ -135,12 +139,52 @@ async def _dq(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _eod(args: argparse.Namespace) -> int:
+    from trader.core.clock import WallClock
+    from trader.ports.clock import today_ist
+    from trader.recorder.service import end_of_day
+
+    cfg = _cfg(args)
+    day = date.fromisoformat(args.date) if args.date else today_ist(WallClock())
+    print(await asyncio.to_thread(end_of_day, cfg, day))
+    return 0
+
+
+async def _paper(args: argparse.Namespace) -> int:
+    from trader.engine.runner import run_paper_forever
+
+    await run_paper_forever(_cfg(args))
+    return 0
+
+
+async def _intel(args: argparse.Namespace) -> int:
+    from trader.intel.service import run_intel_forever
+
+    await run_intel_forever(_cfg(args))
+    return 0
+
+
+async def _replay(args: argparse.Namespace) -> int:
+    from trader.engine.runner import replay_day
+
+    cfg = _cfg(args)
+    day = date.fromisoformat(args.date)
+    out = cfg.system.data_dir / "journal" / f"replay-{day.isoformat()}.sqlite"
+    if out.exists():
+        out.unlink()
+    digest, summary = await replay_day(cfg, day, journal_path=out)
+    print(json.dumps(summary, indent=1, default=str))
+    print(f"journal digest: {digest}")
+    print(f"journal: {out}")
+    return 0
+
+
 def _supervise(args: argparse.Namespace) -> int:
     from trader.ops.supervisor import supervise
 
     _cfg(args)
     prof = ["--profile", args.profile] if args.profile else []
-    supervise({"recorder": [*prof, "record"]})
+    supervise({"recorder": [*prof, "record"], "paper": [*prof, "paper"], "intel": [*prof, "intel"]})
     return 0
 
 
@@ -156,12 +200,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--minutes", type=float, default=2.0)
     s = sub.add_parser("dq")
     s.add_argument("--date", default=None)
+    s = sub.add_parser("eod")
+    s.add_argument("--date", default=None)
+    sub.add_parser("paper")
+    sub.add_parser("intel")
+    s = sub.add_parser("replay")
+    s.add_argument("--date", required=True)
     sub.add_parser("supervise")
     args = p.parse_args(argv)
     if args.cmd == "supervise":
         return _supervise(args)
     fn = {"check": _check, "instruments": _instruments, "record": _record, "record-now": _record_now,
-          "dq": _dq}[args.cmd]
+          "dq": _dq, "eod": _eod, "paper": _paper, "replay": _replay, "intel": _intel}[args.cmd]
     return asyncio.run(fn(args))
 
 

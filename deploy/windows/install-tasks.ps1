@@ -1,16 +1,22 @@
 # Registers the supervisor to start at logon and restart if it dies (design §10, laptop operation).
-# Run once from an elevated PowerShell in the repo root:
-#   powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1
+# Runs the services from this repository folder (or -RunDir). Usage:
+#   powershell -ExecutionPolicy Bypass -File deploy\windows\install-tasks.ps1 [-RunDir <folder>]
 # Remove with:  Unregister-ScheduledTask -TaskName "AutoTrading-Supervisor" -Confirm:$false
 
+param([string]$RunDir = "")
 $ErrorActionPreference = "Stop"
-$repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$python = Join-Path $repo ".venv\Scripts\python.exe"
+$repo = if ($RunDir) { (Resolve-Path $RunDir).Path } else { (Resolve-Path "$PSScriptRoot\..\..").Path }
+# pythonw: no console window. A visible console froze the recorder for an hour on 2026-10-13
+# (a click into a console window pauses every process writing to it). Logs go to <data_dir>\logs.
+$python = Join-Path $repo ".venv\Scripts\pythonw.exe"
 if (-not (Test-Path $python)) { throw "venv not found at $python. Run: python -m venv .venv; .venv\Scripts\pip install -e .[dev]" }
 
 $action = New-ScheduledTaskAction -Execute $python -Argument "-m trader.apps.cli supervise" -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$settings = New-ScheduledTaskSettingsSet `
+# -Priority 4 = normal. Task Scheduler's default (7) runs every child at BelowNormal, so any
+# foreground load starves the recorder: on 2026-10-14 a software install (Restart Manager
+# session 11:23:57-11:25:56) froze it for 68 s and Upstox dropped all four feed sockets.
+$settings = New-ScheduledTaskSettingsSet -Priority 4 `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 3650) -MultipleInstances IgnoreNew

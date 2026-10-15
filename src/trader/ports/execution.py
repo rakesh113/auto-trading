@@ -92,5 +92,15 @@ class Trader(ABC):
         while True:
             yield await self._events.get()
 
+    def drain_events(self) -> list[ExecEvent]:
+        """All queued events, without waiting. The engine drains after every market event so
+        processing order is deterministic (identical in live and replay)."""
+        out: list[ExecEvent] = []
+        while True:
+            try:
+                out.append(self._events.get_nowait())
+            except asyncio.QueueEmpty:
+                return out
+
     def _emit(self, ev: ExecEvent) -> None:
         self._events.put_nowait(ev)
